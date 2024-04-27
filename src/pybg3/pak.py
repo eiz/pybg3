@@ -28,5 +28,7 @@ class PakFile:
     self._index = {}
     for i in range(self._lspk.num_files()):
       self._index[self._lspk.file_name(i)] = i
+  def files(self):
+    return self._index.keys()
   def file_data(self, name):
     return self._lspk.file_data(self._index[name])

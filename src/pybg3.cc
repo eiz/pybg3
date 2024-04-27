@@ -112,6 +112,88 @@ struct py_lspk_file {
   bg3_lspk_file lspk;
 };
 
+struct py_lsof_file {
+  py_lsof_file(py::str py_path) {
+    std::string path(py_path);
+    bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
+    if (status) {
+      throw std::runtime_error("Failed to open lsof file");
+    }
+    status = bg3_lsof_reader_init(&reader, mapped.data, mapped.data_len);
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse lsof file");
+    }
+    is_mapped_file = true;
+  }
+  py_lsof_file(py::bytes data) {
+    std::string_view view(data);
+    bg3_status status = bg3_lsof_reader_init(&reader, (char*)view.data(), view.size());
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse lsof file");
+    }
+  }
+  ~py_lsof_file() {
+    if (is_mapped_file) {
+      bg3_mapped_file_destroy(&mapped);
+    }
+    bg3_lsof_reader_destroy(&reader);
+  }
+  std::string to_sexp() {
+    bg3_buffer tmp_buf = {};
+    bg3_lsof_reader_print_sexp(&reader, &tmp_buf);
+    std::string result(tmp_buf.data, tmp_buf.size);
+    bg3_buffer_destroy(&tmp_buf);
+    return result;  // 3 string allocations, lol
+  }
+  bool is_mapped_file{false};
+  bg3_mapped_file mapped;
+  bg3_lsof_reader reader;
+};
+
+struct py_loca_file {
+  py_loca_file(py::str py_path) {
+    std::string path(py_path);
+    bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
+    if (status) {
+      throw std::runtime_error("Failed to open loca file");
+    }
+    status = bg3_loca_reader_init(&reader, mapped.data, mapped.data_len);
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse loca file");
+    }
+    is_mapped_file = true;
+  }
+  py_loca_file(py::bytes data) {
+    std::string_view view(data);
+    bg3_status status = bg3_loca_reader_init(&reader, (char*)view.data(), view.size());
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse loca file");
+    }
+  }
+  ~py_loca_file() {
+    if (is_mapped_file) {
+      bg3_mapped_file_destroy(&mapped);
+    }
+    bg3_loca_reader_destroy(&reader);
+  }
+  size_t num_entries() { return reader.header.num_entries; }
+  py::tuple entry(size_t idx) {
+    if (idx >= reader.header.num_entries) {
+      throw std::runtime_error("Index out of bounds");
+    }
+    bg3_loca_reader_entry* entry = &reader.entries[idx];
+    return py::make_tuple(entry->handle, entry->version,
+                          std::string(entry->data, entry->data_size - 1));
+  }
+  bool is_mapped_file{false};
+  bg3_mapped_file mapped;
+  bg3_loca_reader reader;
+};
+
 PYBIND11_MODULE(_pybg3, m) {
   m.doc() = "python libbg3 bindings";
   m.def("osiris_compile_path", &osiris_compile_path, "Compile an osiris save");
@@ -122,4 +204,15 @@ PYBIND11_MODULE(_pybg3, m) {
       .def("file_size", &py_lspk_file::file_size)
       .def("file_data", &py_lspk_file::file_data)
       .def("num_files", &py_lspk_file::num_files);
+  py::class_<py_lsof_file>(m, "_LsofFile")
+      // this api seems pretty grody and easy to mess up (str vs bytes doing totally
+      // different things)
+      .def(py::init<py::bytes>())
+      .def(py::init<py::str>())
+      .def("to_sexp", &py_lsof_file::to_sexp);
+  py::class_<py_loca_file>(m, "_LocaFile")
+      .def(py::init<py::bytes>())
+      .def(py::init<py::str>())
+      .def("num_entries", &py_loca_file::num_entries)
+      .def("entry", &py_loca_file::entry);
 }
