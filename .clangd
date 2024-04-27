@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: [-DLIBBG3_CLANGD=1]

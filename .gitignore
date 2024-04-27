@@ -1,0 +1,9 @@
+.vscode
+.cache
+.venv
+build
+bin
+tmp
+*.egg-info
+*.so
+__pycache__

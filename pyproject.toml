@@ -1,0 +1,13 @@
+[project]
+name = "pybg3"
+version = "0.1.0"
+description = "python bindings for libbg3"
+authors = [ {name = "Mackenzie Straight", email = "mack@str.rs"}, ]
+requires-python = ">= 3.12"
+dependencies = [
+  "sexpdata",
+]
+
+[build-system]
+requires = ["scikit-build-core>=0.3.3", "pybind11"]
+build-backend = "scikit_build_core.build"
