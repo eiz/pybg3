@@ -1,7 +1,7 @@
 [project]
 name = "pybg3"
 version = "0.1.0"
-description = "python bindings for libbg3"
+description = "python bg3 utilities based on libbg3"
 authors = [ {name = "Mackenzie Straight", email = "mack@str.rs"}, ]
 requires-python = ">= 3.12"
 dependencies = [
@@ -11,3 +11,9 @@ dependencies = [
 [build-system]
 requires = ["scikit-build-core>=0.3.3", "pybind11"]
 build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+build-dir = "build"
+
+[tool.scikit-build.cmake.define]
+CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
