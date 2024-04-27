@@ -19,3 +19,20 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+
+import tempfile
+import sexpdata
+from pathlib import Path
+from . import _pybg3
+
+def decompile(input_path, output_path):
+    status = _pybg3.osiris_decompile_path(input_path, output_path)
+    if status != 0:
+        raise Exception(f"Failed to decompile {input_path} to {output_path}")
+
+def load_binary(input_path):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_output_path = f"{temp_dir}/output"
+        decompile(input_path, temp_output_path)
+        text = Path(temp_output_path).read_text()
+        return sexpdata.loads("(" + text + ")")

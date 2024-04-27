@@ -1,2 +1,5 @@
 CompileFlags:
   Add: [-DLIBBG3_CLANGD=1]
+Diagnostics:
+  ClangTidy:
+    Remove: misc-definitions-in-headers

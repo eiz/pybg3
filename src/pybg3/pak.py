@@ -19,3 +19,14 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+
+from . import _pybg3
+
+class PakFile:
+  def __init__(self, path):
+    self._lspk = _pybg3._LspkFile(path)
+    self._index = {}
+    for i in range(self._lspk.num_files()):
+      self._index[self._lspk.file_name(i)] = i
+  def file_data(self, name):
+    return self._lspk.file_data(self._index[name])
