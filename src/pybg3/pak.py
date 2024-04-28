@@ -20,15 +20,18 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from typing import Iterable
 from . import _pybg3
 
 class PakFile:
-  def __init__(self, path):
-    self._lspk = _pybg3._LspkFile(path)
+  _lspk: _pybg3._LspkFile
+  _index: dict[str, int]
+  def __init__(self, path: str):
+    self._lspk = _pybg3._LspkFile(str(path))
     self._index = {}
     for i in range(self._lspk.num_files()):
       self._index[self._lspk.file_name(i)] = i
-  def files(self):
+  def files(self) -> Iterable[str]:
     return self._index.keys()
-  def file_data(self, name):
+  def file_data(self, name: str) -> bytes:
     return self._lspk.file_data(self._index[name])

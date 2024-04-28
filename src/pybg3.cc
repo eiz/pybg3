@@ -95,6 +95,7 @@ struct py_lspk_file {
     }
     return entry->uncompressed_size;
   }
+  int priority() { return lspk.header.priority; }
   py::bytes file_data(size_t idx) {
     if (idx >= lspk.num_files) {
       throw std::runtime_error("Index out of bounds");
@@ -112,7 +113,117 @@ struct py_lspk_file {
   bg3_lspk_file lspk;
 };
 
+static py::object convert_value(bg3_lsof_dt type, char* value_bytes, size_t length) {
+  // There's an unfortunate amount of pasta from bg3_lsof_reader_print_sexp
+  // here. TODO: create some kind of variant struct that these can be expanded
+  // out into so this kind of code isn't so hairy
+  switch (type) {
+    case bg3_lsof_dt_lsstring:
+    case bg3_lsof_dt_fixedstring:
+      return py::str(value_bytes, length - 1);
+    case bg3_lsof_dt_bool:
+      return py::bool_(*value_bytes != 0);
+    case bg3_lsof_dt_uuid: {
+      bg3_uuid id;
+      if (length != sizeof(bg3_uuid)) {
+        bg3_panic("invalid uuid length");
+      }
+      memcpy(&id, value_bytes, sizeof(id));
+      bg3_buffer tmp = {};
+      bg3_buffer_printf(&tmp, "%08x-%04x-%04x-%04x-%04x%04x%04x\")", id.word, id.half[0],
+                        id.half[1], id.half[2], id.half[3], id.half[4], id.half[5]);
+      py::object result = py::str(tmp.data, tmp.size);
+      bg3_buffer_destroy(&tmp);
+      return result;
+    }
+    case bg3_lsof_dt_translatedstring: {
+      uint16_t version;
+      uint32_t string_len;
+      memcpy(&version, value_bytes, sizeof(uint16_t));
+      memcpy(&string_len, value_bytes + 2, sizeof(uint32_t));
+      if (string_len != length - 6) {
+        bg3_panic("invalid translated string length");
+      }
+      return py::make_tuple(py::str(value_bytes + 6, string_len), version);
+    }
+    case bg3_lsof_dt_ivec2: {
+      struct {
+        int32_t x, y;
+      } vec;
+      memcpy(&vec, value_bytes, sizeof(vec));
+      return py::make_tuple(vec.x, vec.y);
+    }
+    case bg3_lsof_dt_ivec3: {
+      struct {
+        int32_t x, y, z;
+      } vec;
+      memcpy(&vec, value_bytes, sizeof(vec));
+      return py::make_tuple(vec.x, vec.y, vec.z);
+    }
+    case bg3_lsof_dt_ivec4: {
+      struct {
+        int32_t x, y, z, w;
+      } vec;
+      memcpy(&vec, value_bytes, sizeof(vec));
+      return py::make_tuple(vec.x, vec.y, vec.z, vec.w);
+    }
+    case bg3_lsof_dt_vec2: {
+      struct {
+        float x, y;
+      } vec;
+      memcpy(&vec, value_bytes, sizeof(vec));
+      return py::make_tuple(vec.x, vec.y);
+    }
+    case bg3_lsof_dt_vec3: {
+      struct {
+        float x, y, z;
+      } vec;
+      memcpy(&vec, value_bytes, sizeof(vec));
+      return py::make_tuple(vec.x, vec.y, vec.z);
+    }
+    case bg3_lsof_dt_vec4: {
+      struct {
+        float x, y, z, w;
+      } vec;
+      memcpy(&vec, value_bytes, sizeof(vec));
+      return py::make_tuple(vec.x, vec.y, vec.z, vec.w);
+    }
+#define V(dt, itype)                          \
+  case dt: {                                  \
+    itype val;                                \
+    memcpy(&val, value_bytes, sizeof(itype)); \
+    return py::int_(val);                     \
+  }
+      V(bg3_lsof_dt_uint8, uint8_t);
+      V(bg3_lsof_dt_int8, int8_t);
+      V(bg3_lsof_dt_uint16, uint16_t);
+      V(bg3_lsof_dt_int16, int16_t);
+      V(bg3_lsof_dt_uint32, uint32_t);
+      V(bg3_lsof_dt_int32, int32_t);
+      V(bg3_lsof_dt_uint64, int64_t);
+      V(bg3_lsof_dt_int64, int64_t);
+#undef V
+#define V(dt, itype)                          \
+  case dt: {                                  \
+    itype val;                                \
+    memcpy(&val, value_bytes, sizeof(itype)); \
+    return py::float_(val);                   \
+  }
+      V(bg3_lsof_dt_float, float);
+      V(bg3_lsof_dt_double, double);
+#undef V
+    default:
+      return py::bytes(value_bytes, length);
+  }
+}
+
 struct py_lsof_file {
+  static std::unique_ptr<py_lsof_file> from_path(py::str path) {
+    return std::make_unique<py_lsof_file>(path);
+  }
+  static std::unique_ptr<py_lsof_file> from_data(py::bytes data) {
+    return std::make_unique<py_lsof_file>(data);
+  }
   py_lsof_file(py::str py_path) {
     std::string path(py_path);
     bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
@@ -126,11 +237,12 @@ struct py_lsof_file {
     }
     is_mapped_file = true;
   }
-  py_lsof_file(py::bytes data) {
+  py_lsof_file(py::bytes data) : data(data) {
     std::string_view view(data);
-    bg3_status status = bg3_lsof_reader_init(&reader, (char*)view.data(), view.size());
+    // TODO: lsof reader isnt const correct
+    bg3_status status =
+        bg3_lsof_reader_init(&reader, const_cast<char*>(view.data()), view.size());
     if (status) {
-      bg3_mapped_file_destroy(&mapped);
       throw std::runtime_error("Failed to parse lsof file");
     }
   }
@@ -147,12 +259,53 @@ struct py_lsof_file {
     bg3_buffer_destroy(&tmp_buf);
     return result;  // 3 string allocations, lol
   }
+  bool is_wide() {
+    return LIBBG3_IS_SET(reader.header.flags, LIBBG3_LSOF_FLAG_HAS_SIBLING_POINTERS);
+  }
+  size_t num_nodes() { return reader.num_nodes; }
+  size_t num_attrs() { return reader.num_attrs; }
+  py::tuple node(size_t idx) {
+    bg3_lsof_node_wide n;
+    if (bg3_lsof_reader_get_node(&reader, &n, idx)) {
+      throw std::runtime_error("Index out of bounds");
+    }
+    bg3_lsof_symtab_entry* sym = bg3_lsof_symtab_get_ref(&reader.symtab, n.name);
+    std::string name(sym->data, sym->length);
+    return py::make_tuple(name, n.parent, n.next, n.attrs);
+  }
+  py::tuple attr(size_t idx) {
+    bg3_lsof_attr_wide a;
+    if (bg3_lsof_reader_get_attr(&reader, &a, idx)) {
+      throw std::runtime_error("Index out of bounds");
+    }
+    // TODO: this whole API situation is really bad on the C level. think we need an
+    // attribute iterator api or something
+    bg3_lsof_symtab_entry* sym = bg3_lsof_symtab_get_ref(&reader.symtab, a.name);
+    std::string name(sym->data, sym->length);
+    bool wide = is_wide();
+    bg3_lsof_reader_ensure_value_offsets(&reader);
+    size_t offset = wide ? a.value : reader.value_offsets[idx];
+    py::object owner = py::none();
+    if (!wide) {
+      owner = py::int_(a.owner);
+    }
+    char* value_bytes = reader.value_table_raw + offset;
+    return py::make_tuple(name, (int)a.type, a.next, owner,
+                          convert_value((bg3_lsof_dt)a.type, value_bytes, a.length));
+  }
   bool is_mapped_file{false};
+  py::bytes data;
   bg3_mapped_file mapped;
   bg3_lsof_reader reader;
 };
 
 struct py_loca_file {
+  static std::unique_ptr<py_loca_file> from_path(py::str path) {
+    return std::make_unique<py_loca_file>(path);
+  }
+  static std::unique_ptr<py_loca_file> from_data(py::bytes data) {
+    return std::make_unique<py_loca_file>(data);
+  }
   py_loca_file(py::str py_path) {
     std::string path(py_path);
     bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
@@ -166,7 +319,7 @@ struct py_loca_file {
     }
     is_mapped_file = true;
   }
-  py_loca_file(py::bytes data) {
+  py_loca_file(py::bytes data) : data(data) {
     std::string_view view(data);
     bg3_status status = bg3_loca_reader_init(&reader, (char*)view.data(), view.size());
     if (status) {
@@ -191,6 +344,7 @@ struct py_loca_file {
   }
   bool is_mapped_file{false};
   bg3_mapped_file mapped;
+  py::bytes data;
   bg3_loca_reader reader;
 };
 
@@ -203,16 +357,20 @@ PYBIND11_MODULE(_pybg3, m) {
       .def("file_name", &py_lspk_file::file_name)
       .def("file_size", &py_lspk_file::file_size)
       .def("file_data", &py_lspk_file::file_data)
-      .def("num_files", &py_lspk_file::num_files);
+      .def("num_files", &py_lspk_file::num_files)
+      .def("priority", &py_lspk_file::priority);
   py::class_<py_lsof_file>(m, "_LsofFile")
-      // this api seems pretty grody and easy to mess up (str vs bytes doing totally
-      // different things)
-      .def(py::init<py::bytes>())
-      .def(py::init<py::str>())
+      .def_static("from_path", &py_lsof_file::from_path)
+      .def_static("from_data", &py_lsof_file::from_data)
+      .def("is_wide", &py_lsof_file::is_wide)
+      .def("num_nodes", &py_lsof_file::num_nodes)
+      .def("num_attrs", &py_lsof_file::num_attrs)
+      .def("node", &py_lsof_file::node)
+      .def("attr", &py_lsof_file::attr)
       .def("to_sexp", &py_lsof_file::to_sexp);
   py::class_<py_loca_file>(m, "_LocaFile")
-      .def(py::init<py::bytes>())
-      .def(py::init<py::str>())
+      .def_static("from_path", &py_loca_file::from_path)
+      .def_static("from_data", &py_loca_file::from_data)
       .def("num_entries", &py_loca_file::num_entries)
       .def("entry", &py_loca_file::entry);
 }
