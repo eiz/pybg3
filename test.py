@@ -1,7 +1,7 @@
 import sexpdata
 import os
 from pathlib import Path
-from pybg3 import pak, lsf
+from pybg3 import pak, lsf, _pybg3
 
 BG3_ROOT = Path(os.environ.get("BG3_DATA", os.path.expanduser("~/l/bg3/Data")))
 GUSTAV = pak.PakFile(BG3_ROOT / "Gustav.pak")
@@ -51,3 +51,6 @@ index_root_templates(GUSTAV_ROOT_TEMPLATES)
 index_root_templates(GUSTAVDEV_ROOT_TEMPLATES)
 for name in ROOT_TEMPLATES_BY_NAME.keys():
   print(name)
+
+index = _pybg3._IndexReader(os.path.expanduser("~/code/libbg3/tmp/bg3.idx"))
+print(index.query("mysterious artefact"))

@@ -23,7 +23,10 @@
 #define LIBBG3_IMPLEMENTATION
 #include "libbg3.h"
 
+#include <unordered_map>
+
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 namespace py = pybind11;
 
@@ -348,6 +351,46 @@ struct py_loca_file {
   bg3_loca_reader reader;
 };
 
+struct py_index_reader {
+  py_index_reader(const std::string& path) {
+    bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
+    if (status) {
+      throw std::runtime_error("Failed to open index file");
+    }
+    status = bg3_index_reader_init(&reader, mapped.data, mapped.data_len);
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse index file");
+    }
+  }
+  ~py_index_reader() {
+    bg3_index_reader_destroy(&reader);
+    bg3_mapped_file_destroy(&mapped);
+  }
+  std::vector<py::tuple> query(const std::string& query_str) {
+    std::vector<py::tuple> output;
+    bg3_index_search_results results;
+    bg3_index_reader_query(&reader, &results, query_str.c_str());
+    for (size_t i = 0; i < results.num_hits; ++i) {
+      bg3_index_search_hit* hit = results.hits + i;
+      auto& pak_intern = intern[hit->pak->name];
+      if (!pak_intern) {
+        pak_intern = py::str(hit->pak->name);
+      }
+      auto& file_intern = intern[hit->file->name];
+      if (!file_intern) {
+        file_intern = py::str(hit->file->name);
+      }
+      output.emplace_back(py::make_tuple(pak_intern, file_intern, hit->value));
+    }
+    bg3_index_search_results_destroy(&results);
+    return output;
+  }
+  std::unordered_map<std::string, py::object> intern;
+  bg3_mapped_file mapped;
+  bg3_index_reader reader;
+};
+
 PYBIND11_MODULE(_pybg3, m) {
   m.doc() = "python libbg3 bindings";
   m.def("osiris_compile_path", &osiris_compile_path, "Compile an osiris save");
@@ -373,4 +416,7 @@ PYBIND11_MODULE(_pybg3, m) {
       .def_static("from_data", &py_loca_file::from_data)
       .def("num_entries", &py_loca_file::num_entries)
       .def("entry", &py_loca_file::entry);
+  py::class_<py_index_reader>(m, "_IndexReader")
+      .def(py::init<const std::string&>())
+      .def("query", &py_index_reader::query);
 }
