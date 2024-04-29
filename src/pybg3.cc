@@ -296,6 +296,7 @@ struct py_lsof_file {
     return py::make_tuple(name, (int)a.type, a.next, owner,
                           convert_value((bg3_lsof_dt)a.type, value_bytes, a.length));
   }
+  void ensure_sibling_pointers() { bg3_lsof_reader_ensure_sibling_pointers(&reader); }
   bool is_mapped_file{false};
   py::bytes data;
   bg3_mapped_file mapped;
@@ -406,6 +407,7 @@ PYBIND11_MODULE(_pybg3, m) {
       .def_static("from_path", &py_lsof_file::from_path)
       .def_static("from_data", &py_lsof_file::from_data)
       .def("is_wide", &py_lsof_file::is_wide)
+      .def("ensure_sibling_pointers", &py_lsof_file::ensure_sibling_pointers)
       .def("num_nodes", &py_lsof_file::num_nodes)
       .def("num_attrs", &py_lsof_file::num_attrs)
       .def("node", &py_lsof_file::node)

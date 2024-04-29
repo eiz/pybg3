@@ -1,8 +1,17 @@
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from pybg3 import pak, lsf, _pybg3
+
+
+def checktime(msg, cb):
+    t_start = time.time()
+    cb()
+    t_end = time.time()
+    print(f"{msg}: {t_end - t_start}")
+
 
 BG3_ROOT = Path(os.environ.get("BG3_DATA", os.path.expanduser("~/l/bg3/Data")))
 GUSTAV = pak.PakFile(BG3_ROOT / "Gustav.pak")
@@ -31,6 +40,31 @@ def load_asset_banks(pak):
             BANKS[name] = lsf.loads(pak.file_data(name))
 
 
+def check_for_multiple_roots_wide(pak):
+    for name in pak.files():
+        if not name.endswith(".lsf"):
+            continue
+        try:
+            reader = lsf.loads(pak.file_data(name))
+            if not reader.is_wide():
+                continue
+            num_roots = 0
+            first_root = None
+            for node_idx in range(reader.num_nodes()):
+                node_name, parent, next, attrs = reader.node(node_idx)
+                if parent == -1:
+                    if first_root is None:
+                        first_root = node_idx
+                    num_roots += 1
+                if num_roots > 1:
+                    _, _, first_next, _ = reader.node(first_root)
+                    print(f"{name} has multiple roots, first node's next is {first_next}")
+                    break
+        except Exception:
+            pass
+
+
+# check_for_multiple_roots_wide(SHARED)
 load_asset_banks(SHARED)
 load_asset_banks(GUSTAV)
 
@@ -88,6 +122,25 @@ LEVELS = LevelSet()
 
 def index_root_templates(root_templates):
     n = root_templates.num_nodes()
+    root_templates.ensure_sibling_pointers()
+    n_attr = root_templates.num_attrs()
+    node_idx = 1
+    while node_idx != -1 and node_idx < n:
+        name, parent, next, attrs = root_templates.node(node_idx)
+        assert name == "GameObjects" and parent == 0
+        node_idx = next
+        attr_index = attrs
+        while attr_index != -1 and attr_index < n_attr:
+            a_name, a_type, a_next, a_owner, a_value = root_templates.attr(attr_index)
+            if a_name == "MapKey":
+                ROOT_TEMPLATES_BY_UUID[a_value] = (root_templates, node_idx)
+            if a_name == "Name":
+                ROOT_TEMPLATES_BY_NAME[a_value] = (root_templates, node_idx)
+            attr_index = a_next
+
+
+def index_root_templates_slow(root_templates):
+    root_templates.ensure_sibling_pointers()
     n_attr = root_templates.num_attrs()
     wide = root_templates.is_wide()
     for i in range(root_templates.num_nodes()):
@@ -110,10 +163,17 @@ def index_root_templates(root_templates):
 
 print(SHARED_ROOT_TEMPLATES.node(0))
 print(SHARED_ROOT_TEMPLATES.is_wide())
-index_root_templates(SHARED_ROOT_TEMPLATES)
-index_root_templates(SHAREDDEV_ROOT_TEMPLATES)
-index_root_templates(GUSTAV_ROOT_TEMPLATES)
-index_root_templates(GUSTAVDEV_ROOT_TEMPLATES)
+
+
+def index_all_root_templates():
+    checktime("shared", lambda: index_root_templates(SHARED_ROOT_TEMPLATES))
+    checktime("shareddev", lambda: index_root_templates(SHAREDDEV_ROOT_TEMPLATES))
+    checktime("gustav", lambda: index_root_templates(GUSTAV_ROOT_TEMPLATES))
+    checktime("gustavdev", lambda: index_root_templates(GUSTAVDEV_ROOT_TEMPLATES))
+
+
+checktime("root templates", index_all_root_templates)
+print(len(ROOT_TEMPLATES_BY_UUID.keys()))
 for name in ROOT_TEMPLATES_BY_NAME.keys():
     print(name)
 
@@ -155,3 +215,12 @@ t_lsof, t_node = ROOT_TEMPLATES_BY_UUID["f05367f6-78f2-4631-996e-7e21912bbb78"]
 t, _ = lsf.Node.parse_node(t_lsof, t_node)
 print(len(t.children))
 print(t.attrs)
+t_start = time.time()
+lsf.Node.parse_file(SHARED_ROOT_TEMPLATES)
+t_end = time.time()
+print(t_end - t_start)
+
+Hireling = lsf.loads(
+    SHARED.file_data("Mods/SharedDev/Story/DialogsBinary/Hirelings/Hireling.lsf")
+)
+print(Hireling.to_sexp())

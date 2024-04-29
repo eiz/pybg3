@@ -15,6 +15,8 @@ build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]
 build-dir = "build"
+# cmake.build-type = "Debug"
+# install.strip = false
 
 [tool.scikit-build.cmake.define]
 CMAKE_EXPORT_COMPILE_COMMANDS = "ON"

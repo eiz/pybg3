@@ -155,6 +155,16 @@ class Node:
             node_stack[-1].children.append(child)
         return (node_stack[0], node_idx)
 
+    @staticmethod
+    def parse_file(file):
+        node_idx = 0
+        num_nodes = file.num_nodes()
+        nodes = []
+        while node_idx < num_nodes:
+            node, node_idx = Node.parse_node(file, node_idx)
+            nodes.append(node)
+        return nodes
+
     def __add__(self, other):
         return Node(self.name, self.attrs, self.children + other)
 
