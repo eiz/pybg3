@@ -3,7 +3,7 @@ name = "pybg3"
 version = "0.1.0"
 description = "python bg3 utilities based on libbg3"
 authors = [ {name = "Mackenzie Straight", email = "mack@str.rs"}, ]
-requires-python = ">= 3.12"
+requires-python = ">= 3.11"
 dependencies = [
   "sexpdata",
 ]
