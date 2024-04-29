@@ -10,6 +10,9 @@ SHARED = pak.PakFile(BG3_ROOT / "Shared.pak")
 SHARED_ROOT_TEMPLATES = lsf.loads(
     SHARED.file_data("Public/Shared/RootTemplates/_merged.lsf")
 )
+SHAREDDEV_ROOT_TEMPLATES = lsf.loads(
+    SHARED.file_data("Public/SharedDev/RootTemplates/_merged.lsf")
+)
 GUSTAV_ROOT_TEMPLATES = lsf.loads(
     GUSTAV.file_data("Public/Gustav/RootTemplates/_merged.lsf")
 )
@@ -95,7 +98,7 @@ def index_root_templates(root_templates):
                 a_name, a_type, a_next, a_owner, a_value = root_templates.attr(attr_index)
                 if not wide and a_owner != i:
                     break
-                if a_name == "ID":
+                if a_name == "MapKey":
                     ROOT_TEMPLATES_BY_UUID[a_value] = (root_templates, i)
                 if a_name == "Name":
                     ROOT_TEMPLATES_BY_NAME[a_value] = (root_templates, i)
@@ -108,6 +111,7 @@ def index_root_templates(root_templates):
 print(SHARED_ROOT_TEMPLATES.node(0))
 print(SHARED_ROOT_TEMPLATES.is_wide())
 index_root_templates(SHARED_ROOT_TEMPLATES)
+index_root_templates(SHAREDDEV_ROOT_TEMPLATES)
 index_root_templates(GUSTAV_ROOT_TEMPLATES)
 index_root_templates(GUSTAVDEV_ROOT_TEMPLATES)
 for name in ROOT_TEMPLATES_BY_NAME.keys():
@@ -145,3 +149,9 @@ AIN_Main_A_Characters = lsf.node.Templates() + [
         ),
     ]
 ]
+
+print(index.query("f05367f6-78f2-4631-996e-7e21912bbb78"))
+t_lsof, t_node = ROOT_TEMPLATES_BY_UUID["f05367f6-78f2-4631-996e-7e21912bbb78"]
+t, _ = lsf.Node.parse_node(t_lsof, t_node)
+print(len(t.children))
+print(t.attrs)
