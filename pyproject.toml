@@ -6,6 +6,7 @@ authors = [ {name = "Mackenzie Straight", email = "mack@str.rs"}, ]
 requires-python = ">= 3.11"
 dependencies = [
   "sexpdata",
+  "usd-core>=24.5",
 ]
 
 [build-system]
