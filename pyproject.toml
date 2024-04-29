@@ -17,3 +17,6 @@ build-dir = "build"
 
 [tool.scikit-build.cmake.define]
 CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
+
+[tool.ruff]
+line-length = 90

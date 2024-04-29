@@ -92,9 +92,7 @@ def index_root_templates(root_templates):
         if name == "GameObjects" and parent == 0:
             attr_index = attrs
             while attr_index != -1 and attr_index < n_attr:
-                a_name, a_type, a_next, a_owner, a_value = root_templates.attr(
-                    attr_index
-                )
+                a_name, a_type, a_next, a_owner, a_value = root_templates.attr(attr_index)
                 if not wide and a_owner != i:
                     break
                 if a_name == "ID":
@@ -124,3 +122,62 @@ for name in sorted(LEVELS.levels.keys()):
     print(name)
     for source in LEVELS.levels[name].sources:
         print(f"  {source.mod_name}/{name}/{source.type}/{source.file_name}.lsf")
+
+
+class Node:
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.attrs = kwargs
+        self.children = []
+
+    def __add__(self, other):
+        new_node = Node(self.name, **self.attrs)
+        new_node.children = self.children + other
+        return new_node
+
+    def __iadd__(self, other):
+        self.children += other
+        return self
+
+    def __repr__(self):
+        return f"{self.name}({self.attrs!r}) + {self.children!r}"
+
+
+class NodeFactory:
+    def __getattr__(self, name):
+        def wrapper(**kwargs):
+            return Node(name, **kwargs)
+
+        return wrapper
+
+
+node = NodeFactory()
+test_node = node.GameObjects(
+    ID="aksdjahskdjhasd",
+    Name="AIN_The_Thing",
+    Type="item",
+) + [node.Transform(Position=(0, 0, 0), Rotation=(0, 0, 0), Scale=(1, 1, 1))]
+print(test_node)
+print(test_node.children)
+
+AIN_Main_A_Characters = node.Templates() + [
+    node.GameObjects(
+        AnubisConfigName="Patroller",
+        Archetype="deathShepherd",
+        Flag=1,  # TODO: must wrap integer types
+        LevelName="AIN_Main_A",
+        MapKey="886b6ed8-4b76-59a4-7daa-187ba6c23f6c",
+        Name="S_AIN_DeathBoi",
+        TemplateName="f05367f6-78f2-4631-996e-7e21912bbb78",
+        Type="character",
+        _OriginalFileVersion_=144115207403209026,
+    )
+    + [
+        node.LocomotionParams(),
+        node.Transform(
+            Position=(-3.0, 0.0, 0.0),
+            RotationQuat=(0.0, 0.469850, 0.0, 0.882746),
+            Scale=1.5,
+        ),
+    ]
+]

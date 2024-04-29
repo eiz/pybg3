@@ -25,10 +25,12 @@ import sexpdata
 from pathlib import Path
 from . import _pybg3
 
+
 def decompile(input_path, output_path):
     status = _pybg3.osiris_decompile_path(input_path, output_path)
     if status != 0:
         raise Exception(f"Failed to decompile {input_path} to {output_path}")
+
 
 def load_binary(input_path):
     with tempfile.TemporaryDirectory() as temp_dir:
