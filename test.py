@@ -84,34 +84,21 @@ class AssetTypeSet:
             name, parent, next, attrs = asset_banks.node(node_idx)
             asset_type = name.replace("Bank", "")
             if node_idx + 1 < n:
-                self._index_bank(
+                self._index_bank_native(
                     self.get_or_create(asset_type), asset_banks, node_idx + 1
                 )
             node_idx = next
 
-    def _index_bank(self, asset_set, asset_banks, node_idx):
-        while node_idx != -1:
-            name, parent, next, attrs = asset_banks.node(node_idx)
-            assert name == "Resource"
-            attr_index = attrs
-            node_idx = next
-            n_found = 0
-            asset_uuid = None
-            asset_name = None
-            while n_found < 2 and attr_index != -1:
-                a_name, a_type, a_next, a_owner, a_value = asset_banks.attr(attr_index)
-                if a_name == "ID":
-                    asset_uuid = a_value
-                    n_found += 1
-                elif a_name == "Name":
-                    asset_name = a_value
-                    n_found += 1
-                attr_index = a_next
-            if n_found == 2:
-                asset = Asset(asset_banks, node_idx)
-                asset_set.by_uuid[asset_uuid] = asset
-                asset_set.by_name[asset_name] = asset
-            node_idx = next
+    def _index_bank_native(self, asset_set, asset_banks, node_idx):
+        by_uuid = asset_set.by_uuid
+        by_name = asset_set.by_name
+
+        def handle(idx, name, uuid):
+            asset = Asset(asset_banks, idx)
+            by_uuid[uuid] = asset
+            by_name[name] = asset
+
+        asset_banks.scan_unique_objects(handle, "Name", "ID", node_idx)
 
     def get_or_create(self, name):
         if name not in self._types:
@@ -146,39 +133,15 @@ class RootTemplateSet:
         self.by_uuid = {}
 
     def _index_root_templates(self, root_templates):
-        n = root_templates.num_nodes()
-        if n == 0:
-            return
-        _string_bytes, node_bytes, attr_bytes, _value_bytes = root_templates.stats()
-        ROOT_TEMPLATE_INDEX_STATS["total_node_bytes"] += node_bytes
-        ROOT_TEMPLATE_INDEX_STATS["total_attr_bytes"] += attr_bytes
-        ROOT_TEMPLATE_INDEX_STATS["total_possible_nodes"] += n
-        root_templates.ensure_sibling_pointers()
-        node_idx = 1
         by_uuid = self.by_uuid
         by_name = self.by_name
-        while node_idx != -1:
-            ROOT_TEMPLATE_INDEX_STATS["total_nodes"] += 1
-            name, parent, next, attrs = root_templates.node(node_idx)
-            assert name == "GameObjects" and parent == 0
-            attr_index = attrs
-            n_found = 0
-            uuid_value = None
-            name_value = None
-            while n_found < 2 and attr_index != -1:
-                a_name, a_type, a_next, a_owner, a_value = root_templates.attr(attr_index)
-                if a_name == "MapKey":
-                    uuid_value = a_value
-                    n_found += 1
-                elif a_name == "Name":
-                    name_value = a_value
-                    n_found += 1
-                attr_index = a_next
-            if n_found == 2:
-                template = RootTemplate(uuid_value, name_value, root_templates, node_idx)
-                by_uuid[uuid_value] = template
-                by_name[name_value] = template
-            node_idx = next
+
+        def handle(idx, name_value, uuid_value):
+            template = RootTemplate(uuid_value, name_value, root_templates, idx)
+            by_uuid[uuid_value] = template
+            by_name[name_value] = template
+
+        root_templates.scan_unique_objects(handle, "Name", "MapKey", 1)
 
     def load_mod(self, pak, mod_name):
         root_templates = lsf.loads(
@@ -228,7 +191,6 @@ def index_all_root_templates():
     checktime(
         "gustavdev root templates", lambda: ROOT_TEMPLATES.load_mod(GUSTAV, "GustavDev")
     )
-    print(ROOT_TEMPLATE_INDEX_STATS)
 
 
 BG3_ROOT = Path(os.environ.get("BG3_DATA", os.path.expanduser("~/l/bg3/Data")))
@@ -241,12 +203,6 @@ LEVEL_OBJECT_FILE_RE = re.compile(
     r"Mods/(?P<mod_name>[^/]+)/Levels/(?P<level_name>[^/]+)/(?P<type>LevelTemplates|Characters|Decals|Items|FogVolumes|TileConstructions|Terrains|Triggers|Lights|LightProbes|CombinedLights|Scenery|Splines)/(?P<file_name>[^/]+).lsf"
 )
 LEVELS = LevelSet()
-ROOT_TEMPLATE_INDEX_STATS = {
-    "total_attr_bytes": 0,
-    "total_node_bytes": 0,
-    "total_nodes": 0,
-    "total_possible_nodes": 0,
-}
 # check_for_multiple_roots_wide(SHARED)
 checktime("shared assets", lambda: ASSETS.load_pak(SHARED))
 checktime("gustav assets", lambda: ASSETS.load_pak(GUSTAV))
@@ -284,7 +240,5 @@ death_shepherd = ROOT_TEMPLATES.by_uuid["f05367f6-78f2-4631-996e-7e21912bbb78"]
 t = death_shepherd.node
 print(len(t.children))
 print(t.attrs)
-for key, asset_set in ASSETS._types.items():
-    print(key)
-    for name, asset in sorted(asset_set.by_name.items()):
-        print(f"  {name}")
+for asset_type, asset_set in ASSETS._types.items():
+    print(f"{asset_type}: {len(asset_set.by_uuid)} ({len(asset_set.by_name)} names)")

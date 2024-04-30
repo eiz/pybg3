@@ -20,7 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include <pybind11/pytypes.h>
 #define LIBBG3_IMPLEMENTATION
 #include "libbg3.h"
 
@@ -298,6 +297,67 @@ struct py_lsof_file {
                           convert_value((bg3_lsof_dt)a.type, value_bytes, a.length));
   }
   void ensure_sibling_pointers() { bg3_lsof_reader_ensure_sibling_pointers(&reader); }
+  void scan_unique_objects(py::function callback,
+                           std::string name_key,
+                           std::string uuid_key,
+                           int32_t node_idx) {
+    ensure_sibling_pointers();
+    bg3_lsof_node_wide* nodes = (bg3_lsof_node_wide*)reader.node_table_raw;
+    bg3_lsof_attr_wide* attrs = (bg3_lsof_attr_wide*)reader.attr_table_raw;
+    bg3_lsof_sym_ref name_ref{};
+    bg3_lsof_sym_ref uuid_ref{};
+    bool has_name_ref{};
+    bool has_uuid_ref{};
+    for (; node_idx < reader.num_nodes && node_idx != -1;
+         node_idx = nodes[node_idx].next) {
+      int32_t found_name = -1, found_uuid = -1;
+      for (int32_t attr_idx = nodes[node_idx].attrs;
+           (found_name == -1 || found_uuid == -1) && attr_idx != -1;
+           attr_idx = attrs[attr_idx].next) {
+        bg3_lsof_attr_wide* a = attrs + attr_idx;
+        if (a->type != bg3_lsof_dt_fixedstring && a->type != bg3_lsof_dt_lsstring) {
+          continue;
+        }
+        if (found_name == -1) {
+          if (has_name_ref) {
+            found_name =
+                a->name.bucket == name_ref.bucket && a->name.entry == name_ref.entry
+                    ? attr_idx
+                    : -1;
+          } else {
+            bg3_lsof_symtab_entry* sym = bg3_lsof_symtab_get_ref(&reader.symtab, a->name);
+            if (sym->length == name_key.size() &&
+                !memcmp(sym->data, name_key.data(), name_key.size())) {
+              found_name = attr_idx;
+              has_name_ref = true;
+              memcpy(&name_ref, &a->name, sizeof(bg3_lsof_sym_ref));
+            }
+          }
+        }
+        if (found_uuid == -1) {
+          if (has_uuid_ref) {
+            found_uuid =
+                a->name.bucket == uuid_ref.bucket && a->name.entry == uuid_ref.entry
+                    ? attr_idx
+                    : -1;
+          } else {
+            bg3_lsof_symtab_entry* sym = bg3_lsof_symtab_get_ref(&reader.symtab, a->name);
+            if (sym->length == uuid_key.size() &&
+                !memcmp(sym->data, uuid_key.data(), uuid_key.size())) {
+              found_uuid = attr_idx;
+              has_uuid_ref = true;
+              memcpy(&uuid_ref, &a->name, sizeof(bg3_lsof_sym_ref));
+            }
+          }
+        }
+      }
+      if (found_name != -1 && found_uuid != -1) {
+        py::str py_name(reader.value_table_raw + attrs[found_name].value);
+        py::str py_uuid(reader.value_table_raw + attrs[found_uuid].value);
+        callback(py::int_(node_idx), py_name, py_uuid);
+      }
+    }
+  }
   py::tuple stats() {
     return py::make_tuple(reader.header.string_table.uncompressed_size,
                           reader.header.node_table.uncompressed_size,
@@ -420,6 +480,7 @@ PYBIND11_MODULE(_pybg3, m) {
       .def("node", &py_lsof_file::node)
       .def("attr", &py_lsof_file::attr)
       .def("stats", &py_lsof_file::stats)
+      .def("scan_unique_objects", &py_lsof_file::scan_unique_objects)
       .def("to_sexp", &py_lsof_file::to_sexp);
   py::class_<py_loca_file>(m, "_LocaFile")
       .def_static("from_path", &py_loca_file::from_path)
