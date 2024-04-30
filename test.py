@@ -123,24 +123,25 @@ LEVELS = LevelSet()
 def index_root_templates(root_templates):
     n = root_templates.num_nodes()
     root_templates.ensure_sibling_pointers()
-    n_attr = root_templates.num_attrs()
     node_idx = 1
     while node_idx != -1 and node_idx < n:
         name, parent, next, attrs = root_templates.node(node_idx)
         assert name == "GameObjects" and parent == 0
-        node_idx = next
         attr_index = attrs
-        while attr_index != -1 and attr_index < n_attr:
+        n_found = 0
+        while n_found < 2 and attr_index != -1:
             a_name, a_type, a_next, a_owner, a_value = root_templates.attr(attr_index)
             if a_name == "MapKey":
                 ROOT_TEMPLATES_BY_UUID[a_value] = (root_templates, node_idx)
+                n_found += 1
             if a_name == "Name":
                 ROOT_TEMPLATES_BY_NAME[a_value] = (root_templates, node_idx)
+                n_found += 1
             attr_index = a_next
+        node_idx = next
 
 
 def index_root_templates_slow(root_templates):
-    root_templates.ensure_sibling_pointers()
     n_attr = root_templates.num_attrs()
     wide = root_templates.is_wide()
     for i in range(root_templates.num_nodes()):
@@ -210,15 +211,15 @@ AIN_Main_A_Characters = lsf.node.Templates() + [
     ]
 ]
 
-print(index.query("f05367f6-78f2-4631-996e-7e21912bbb78"))
+checktime("query1", lambda: print(index.query("f05367f6-78f2-4631-996e-7e21912bbb78")))
 t_lsof, t_node = ROOT_TEMPLATES_BY_UUID["f05367f6-78f2-4631-996e-7e21912bbb78"]
 t, _ = lsf.Node.parse_node(t_lsof, t_node)
 print(len(t.children))
 print(t.attrs)
-t_start = time.time()
-lsf.Node.parse_file(SHARED_ROOT_TEMPLATES)
-t_end = time.time()
-print(t_end - t_start)
+checktime(
+    "parse all of shared root templates",
+    lambda: lsf.Node.parse_file(SHARED_ROOT_TEMPLATES),
+)
 
 Hireling = lsf.loads(
     SHARED.file_data("Mods/SharedDev/Story/DialogsBinary/Hirelings/Hireling.lsf")
