@@ -51,6 +51,80 @@ class LevelSet:
                 )
 
 
+class Asset:
+    def __init__(self, asset_banks, node_idx):
+        self._asset_banks = asset_banks
+        self._node_idx = node_idx
+        self._node = None
+
+    @property
+    def node(self):
+        if self._node is None:
+            self._node, _ = lsf.Node.parse_node(self._asset_banks, self._node_idx)
+        return self._node
+
+
+class AssetSet:
+    def __init__(self):
+        self.by_uuid = {}
+        self.by_name = {}
+
+
+class AssetTypeSet:
+    def __init__(self):
+        self._types = {}
+
+    def _index_asset_banks(self, asset_banks):
+        asset_banks.ensure_sibling_pointers()
+        n = asset_banks.num_nodes()
+        if n == 0:
+            return
+        node_idx = 0
+        while node_idx != -1:
+            name, parent, next, attrs = asset_banks.node(node_idx)
+            asset_type = name.replace("Bank", "")
+            if node_idx + 1 < n:
+                self._index_bank(
+                    self.get_or_create(asset_type), asset_banks, node_idx + 1
+                )
+            node_idx = next
+
+    def _index_bank(self, asset_set, asset_banks, node_idx):
+        while node_idx != -1:
+            name, parent, next, attrs = asset_banks.node(node_idx)
+            assert name == "Resource"
+            attr_index = attrs
+            node_idx = next
+            n_found = 0
+            asset_uuid = None
+            asset_name = None
+            while n_found < 2 and attr_index != -1:
+                a_name, a_type, a_next, a_owner, a_value = asset_banks.attr(attr_index)
+                if a_name == "ID":
+                    asset_uuid = a_value
+                    n_found += 1
+                elif a_name == "Name":
+                    asset_name = a_value
+                    n_found += 1
+                attr_index = a_next
+            if n_found == 2:
+                asset = Asset(asset_banks, node_idx)
+                asset_set.by_uuid[asset_uuid] = asset
+                asset_set.by_name[asset_name] = asset
+            node_idx = next
+
+    def get_or_create(self, name):
+        if name not in self._types:
+            self._types[name] = AssetSet()
+        return self._types[name]
+
+    def load_pak(self, pak):
+        for name in pak.files():
+            if "[PAK]" in name and name.endswith(".lsf"):
+                asset_banks = lsf.loads(pak.file_data(name))
+                self._index_asset_banks(asset_banks)
+
+
 class RootTemplate:
     def __init__(self, uuid, name, file, node_idx):
         self.name = name
@@ -96,7 +170,7 @@ class RootTemplateSet:
                 if a_name == "MapKey":
                     uuid_value = a_value
                     n_found += 1
-                if a_name == "Name":
+                elif a_name == "Name":
                     name_value = a_value
                     n_found += 1
                 attr_index = a_next
@@ -119,12 +193,6 @@ def checktime(msg, cb):
     t_end = time.time()
     print(f"{msg}: {t_end - t_start}")
     return rv
-
-
-def load_asset_banks(pak):
-    for name in pak.files():
-        if "[PAK]" in name and name.endswith(".lsf"):
-            BANKS[name] = lsf.loads(pak.file_data(name))
 
 
 def check_for_multiple_roots_wide(pak):
@@ -167,6 +235,7 @@ BG3_ROOT = Path(os.environ.get("BG3_DATA", os.path.expanduser("~/l/bg3/Data")))
 GUSTAV = checktime("Gustav.pak", lambda: pak.PakFile(BG3_ROOT / "Gustav.pak"))
 SHARED = checktime("Shared.pak", lambda: pak.PakFile(BG3_ROOT / "Shared.pak"))
 ROOT_TEMPLATES = RootTemplateSet()
+ASSETS = AssetTypeSet()
 BANKS = {}
 LEVEL_OBJECT_FILE_RE = re.compile(
     r"Mods/(?P<mod_name>[^/]+)/Levels/(?P<level_name>[^/]+)/(?P<type>LevelTemplates|Characters|Decals|Items|FogVolumes|TileConstructions|Terrains|Triggers|Lights|LightProbes|CombinedLights|Scenery|Splines)/(?P<file_name>[^/]+).lsf"
@@ -179,8 +248,8 @@ ROOT_TEMPLATE_INDEX_STATS = {
     "total_possible_nodes": 0,
 }
 # check_for_multiple_roots_wide(SHARED)
-checktime("shared assets", lambda: load_asset_banks(SHARED))
-checktime("gustav assets", lambda: load_asset_banks(GUSTAV))
+checktime("shared assets", lambda: ASSETS.load_pak(SHARED))
+checktime("gustav assets", lambda: ASSETS.load_pak(GUSTAV))
 checktime("root templates", index_all_root_templates)
 index = checktime(
     "load index",
@@ -215,3 +284,7 @@ death_shepherd = ROOT_TEMPLATES.by_uuid["f05367f6-78f2-4631-996e-7e21912bbb78"]
 t = death_shepherd.node
 print(len(t.children))
 print(t.attrs)
+for key, asset_set in ASSETS._types.items():
+    print(key)
+    for name, asset in sorted(asset_set.by_name.items()):
+        print(f"  {name}")
