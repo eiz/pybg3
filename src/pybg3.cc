@@ -20,6 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include <pybind11/pytypes.h>
 #define LIBBG3_IMPLEMENTATION
 #include "libbg3.h"
 
@@ -297,6 +298,12 @@ struct py_lsof_file {
                           convert_value((bg3_lsof_dt)a.type, value_bytes, a.length));
   }
   void ensure_sibling_pointers() { bg3_lsof_reader_ensure_sibling_pointers(&reader); }
+  py::tuple stats() {
+    return py::make_tuple(reader.header.string_table.uncompressed_size,
+                          reader.header.node_table.uncompressed_size,
+                          reader.header.attr_table.uncompressed_size,
+                          reader.header.value_table.uncompressed_size);
+  }
   bool is_mapped_file{false};
   py::bytes data;
   bg3_mapped_file mapped;
@@ -412,6 +419,7 @@ PYBIND11_MODULE(_pybg3, m) {
       .def("num_attrs", &py_lsof_file::num_attrs)
       .def("node", &py_lsof_file::node)
       .def("attr", &py_lsof_file::attr)
+      .def("stats", &py_lsof_file::stats)
       .def("to_sexp", &py_lsof_file::to_sexp);
   py::class_<py_loca_file>(m, "_LocaFile")
       .def_static("from_path", &py_loca_file::from_path)
