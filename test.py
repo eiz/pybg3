@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from pybg3 import pak, lsf, _pybg3
+from pxr import Usd, UsdGeom
 
 
 @dataclass
@@ -81,12 +82,14 @@ class AssetTypeSet:
             return
         node_idx = 0
         while node_idx != -1:
-            name, parent, next, attrs = asset_banks.node(node_idx)
+            name, _, next, _ = asset_banks.node(node_idx)
             asset_type = name.replace("Bank", "")
             if node_idx + 1 < n:
-                self._index_bank_native(
-                    self.get_or_create(asset_type), asset_banks, node_idx + 1
-                )
+                _, next_parent, _, _ = asset_banks.node(node_idx + 1)
+                if next_parent == node_idx:
+                    self._index_bank_native(
+                        self.get_or_create(asset_type), asset_banks, node_idx + 1
+                    )
             node_idx = next
 
     def _index_bank_native(self, asset_set, asset_banks, node_idx):
@@ -158,30 +161,6 @@ def checktime(msg, cb):
     return rv
 
 
-def check_for_multiple_roots_wide(pak):
-    for name in pak.files():
-        if not name.endswith(".lsf"):
-            continue
-        try:
-            reader = lsf.loads(pak.file_data(name))
-            if not reader.is_wide():
-                continue
-            num_roots = 0
-            first_root = None
-            for node_idx in range(reader.num_nodes()):
-                node_name, parent, next, attrs = reader.node(node_idx)
-                if parent == -1:
-                    if first_root is None:
-                        first_root = node_idx
-                    num_roots += 1
-                if num_roots > 1:
-                    _, _, first_next, _ = reader.node(first_root)
-                    print(f"{name} has multiple roots, first node's next is {first_next}")
-                    break
-        except Exception:
-            pass
-
-
 def index_all_root_templates():
     checktime("shared root templates", lambda: ROOT_TEMPLATES.load_mod(SHARED, "Shared"))
     checktime(
@@ -203,7 +182,6 @@ LEVEL_OBJECT_FILE_RE = re.compile(
     r"Mods/(?P<mod_name>[^/]+)/Levels/(?P<level_name>[^/]+)/(?P<type>LevelTemplates|Characters|Decals|Items|FogVolumes|TileConstructions|Terrains|Triggers|Lights|LightProbes|CombinedLights|Scenery|Splines)/(?P<file_name>[^/]+).lsf"
 )
 LEVELS = LevelSet()
-# check_for_multiple_roots_wide(SHARED)
 checktime("shared assets", lambda: ASSETS.load_pak(SHARED))
 checktime("gustav assets", lambda: ASSETS.load_pak(GUSTAV))
 checktime("root templates", index_all_root_templates)
@@ -242,3 +220,33 @@ print(len(t.children))
 print(t.attrs)
 for asset_type, asset_set in ASSETS._types.items():
     print(f"{asset_type}: {len(asset_set.by_uuid)} ({len(asset_set.by_name)} names)")
+
+
+def to_pxr_uuid(uuid):
+    return f"U{uuid.replace('-', '_')}"
+
+
+def process_nautiloid():
+    TUT_Avernus_C = LEVELS.levels["TUT_Avernus_C"]
+    os.makedirs("out/Levels/TUT_Avernus_C", exist_ok=True)
+    stage = Usd.Stage.CreateNew("out/Levels/TUT_Avernus_C/_merged.usda")
+    for source in TUT_Avernus_C.sources:
+        print(f"{source.mod_name}: {source.type}")
+        templates, _ = lsf.Node.parse_node(source.lsf, 0)
+        for obj in templates.children:
+            name = obj.attrs["Name"].value
+            key = obj.attrs["MapKey"]
+            print(f"{name} ({key})")
+            for component in obj.children:
+                if component.name == "Transform":
+                    xform_key = f"/Levels/TUT_Avernus_C/{source.type}/{to_pxr_uuid(key)}"
+                    xform = UsdGeom.Xform.Define(stage, xform_key)
+                    sphere = UsdGeom.Sphere.Define(stage, f"{xform_key}/placeholder")
+                    translate = xform.AddTranslateOp()
+                    a_translate = component.attrs["Position"]
+                    translate.Set((a_translate.x, a_translate.y, a_translate.z))
+                    print(component)
+    stage.GetRootLayer().Save()
+
+
+checktime("nautiloid", process_nautiloid)

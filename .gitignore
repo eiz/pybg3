@@ -3,6 +3,7 @@
 .venv
 build
 bin
+out
 tmp
 *.egg-info
 *.so

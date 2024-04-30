@@ -6,7 +6,7 @@ from enum import Enum
 
 @dataclass
 class LSString:
-    string: str
+    value: str
 
 
 @dataclass
@@ -143,6 +143,18 @@ class Node:
                         val = a_value
                     case DataType.FLOAT:
                         val = F32(a_value)
+                    case DataType.VEC2:
+                        val = Vec2(*a_value)
+                    case DataType.VEC3:
+                        val = Vec3(*a_value)
+                    case DataType.VEC4:
+                        val = Vec4(*a_value)
+                    case DataType.IVEC2:
+                        val = IVec2(*a_value)
+                    case DataType.IVEC3:
+                        val = IVec3(*a_value)
+                    case DataType.IVEC4:
+                        val = IVec4(*a_value)
                 node.attrs[a_name] = val
                 if wide:
                     attr_index = a_next
