@@ -1,4 +1,5 @@
 import os
+import pprint
 import re
 import time
 from dataclasses import dataclass
@@ -25,6 +26,18 @@ class Level:
 class LevelSet:
     def __init__(self):
         self.levels = {}
+
+    def __getitem__(self, name):
+        return self.levels[name]
+
+    def __contains__(self, name):
+        return name in self.levels
+
+    def __iter__(self):
+        return iter(self.levels)
+
+    def __len__(self):
+        return len(self.levels)
 
     def get_or_create(self, name):
         if name not in self.levels:
@@ -129,6 +142,17 @@ class RootTemplate:
             self._node, _ = lsf.Node.parse_node(self._file, self._node_idx)
         return self._node
 
+    def inherited_attribute(self, name):
+        cur = self
+        while True:
+            val = cur.node.attrs.get(name)
+            if val is not None:
+                return val
+            parent_id = cur.node.attrs.get("ParentTemplateId")
+            if parent_id is None:
+                break
+            cur = ROOT_TEMPLATES.by_uuid[parent_id]
+
 
 class RootTemplateSet:
     def __init__(self):
@@ -175,6 +199,7 @@ def index_all_root_templates():
 BG3_ROOT = Path(os.environ.get("BG3_DATA", os.path.expanduser("~/l/bg3/Data")))
 GUSTAV = checktime("Gustav.pak", lambda: pak.PakFile(BG3_ROOT / "Gustav.pak"))
 SHARED = checktime("Shared.pak", lambda: pak.PakFile(BG3_ROOT / "Shared.pak"))
+ENGINE = checktime("Engine.pak", lambda: pak.PakFile(BG3_ROOT / "Engine.pak"))
 ROOT_TEMPLATES = RootTemplateSet()
 ASSETS = AssetTypeSet()
 BANKS = {}
@@ -182,6 +207,7 @@ LEVEL_OBJECT_FILE_RE = re.compile(
     r"Mods/(?P<mod_name>[^/]+)/Levels/(?P<level_name>[^/]+)/(?P<type>LevelTemplates|Characters|Decals|Items|FogVolumes|TileConstructions|Terrains|Triggers|Lights|LightProbes|CombinedLights|Scenery|Splines)/(?P<file_name>[^/]+).lsf"
 )
 LEVELS = LevelSet()
+checktime("engine assets", lambda: ASSETS.load_pak(ENGINE))
 checktime("shared assets", lambda: ASSETS.load_pak(SHARED))
 checktime("gustav assets", lambda: ASSETS.load_pak(GUSTAV))
 checktime("root templates", index_all_root_templates)
@@ -227,26 +253,35 @@ def to_pxr_uuid(uuid):
 
 
 def process_nautiloid():
-    TUT_Avernus_C = LEVELS.levels["TUT_Avernus_C"]
+    TUT_Avernus_C = LEVELS["TUT_Avernus_C"]
     os.makedirs("out/Levels/TUT_Avernus_C", exist_ok=True)
     stage = Usd.Stage.CreateNew("out/Levels/TUT_Avernus_C/_merged.usda")
+    total_xforms = 0
+    visuals = ASSETS.get_or_create("Visual")
     for source in TUT_Avernus_C.sources:
-        print(f"{source.mod_name}: {source.type}")
         templates, _ = lsf.Node.parse_node(source.lsf, 0)
         for obj in templates.children:
-            name = obj.attrs["Name"].value
+            visual_template = obj.attrs.get("VisualTemplate")
+            root_template = ROOT_TEMPLATES.by_uuid.get(obj.attrs["TemplateName"])
+            if visual_template is None:
+                visual_template = root_template.inherited_attribute("VisualTemplate")
+            if visual_template is not None and len(visual_template) > 0:
+                visual = visuals.by_uuid.get(visual_template)
+                if visual is None:
+                    print(f"missing visual: {visual_template}")
+                    pprint.pp(index.query(visual_template))
             key = obj.attrs["MapKey"]
-            print(f"{name} ({key})")
-            for component in obj.children:
-                if component.name == "Transform":
-                    xform_key = f"/Levels/TUT_Avernus_C/{source.type}/{to_pxr_uuid(key)}"
-                    xform = UsdGeom.Xform.Define(stage, xform_key)
-                    sphere = UsdGeom.Sphere.Define(stage, f"{xform_key}/placeholder")
-                    translate = xform.AddTranslateOp()
-                    a_translate = component.attrs["Position"]
-                    translate.Set((a_translate.x, a_translate.y, a_translate.z))
-                    print(component)
+            transform = obj.component("Transform")
+            if transform is not None:
+                total_xforms += 1
+                xform_key = f"/Levels/TUT_Avernus_C/{source.type}/{to_pxr_uuid(key)}"
+                xform = UsdGeom.Xform.Define(stage, xform_key)
+                sphere = UsdGeom.Sphere.Define(stage, f"{xform_key}/placeholder")
+                translate = xform.AddTranslateOp()
+                a_translate = transform.attrs["Position"]
+                translate.Set((a_translate.x, a_translate.y, a_translate.z))
     stage.GetRootLayer().Save()
+    print(f"Total xforms: {total_xforms}")
 
 
 checktime("nautiloid", process_nautiloid)

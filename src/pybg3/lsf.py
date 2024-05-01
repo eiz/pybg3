@@ -135,6 +135,8 @@ class Node:
                 if not wide and a_owner != node_idx:
                     break
                 match a_type:
+                    case DataType.BOOL:
+                        val = a_value
                     case DataType.INT32:
                         val = I32(a_value)
                     case DataType.LSSTRING:
@@ -176,6 +178,12 @@ class Node:
             node, node_idx = Node.parse_node(file, node_idx)
             nodes.append(node)
         return nodes
+
+    def component(self, name):
+        for child in self.children:
+            if child.name == name:
+                return child
+        return None
 
     def __add__(self, other):
         return Node(self.name, self.attrs, self.children + other)
