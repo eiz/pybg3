@@ -270,6 +270,9 @@ def process_nautiloid():
                 if visual is None:
                     print(f"missing visual: {visual_template}")
                     pprint.pp(index.query(visual_template))
+                else:
+                    source_file = visual.node.attrs.get("SourceFile")
+                    print(f"visual: {visual_template} ({source_file})")
             key = obj.attrs["MapKey"]
             transform = obj.component("Transform")
             if transform is not None:

@@ -1,0 +1,146 @@
+// pybg3
+//
+// Copyright (C) 2024 Mackenzie Straight.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the “Software”), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#include "rans.h"
+
+#include <gtest/gtest.h>
+
+using namespace rans;
+
+TEST(RansTest, RansStateSymmetric) {
+  std::array<uint16_t, 128> bitbuf;
+  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  rans_state<uint32_t> state;
+  for (int i = 0; i < 256; ++i) {
+    state.push_bits(bitstream, i, 8);
+  }
+  EXPECT_EQ(bitstream.begin, bitstream.cur);
+  for (int i = 255; i >= 0; --i) {
+    EXPECT_EQ(i, state.pop_bits(bitstream, 8));
+  }
+  EXPECT_EQ(bitstream.end, bitstream.cur);
+  EXPECT_EQ(state.bits, 0x10000);
+}
+
+TEST(RansTest, RansStateBitstreamOverflows) {
+  std::array<uint16_t, 128> bitbuf;
+  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.begin(), bitbuf.end());
+  EXPECT_THROW(bitstream.push(0), std::out_of_range);
+  bitstream = rans_bitstream<uint16_t>(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  EXPECT_THROW(bitstream.pop(), std::out_of_range);
+}
+
+TEST(RansTest, RansStateCdf) {
+  std::array<uint16_t, 128> bitbuf;
+  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  rans_state<uint32_t> state;
+  frequency_table<uint16_t, 2, 15> table;
+  table.sums = {0, 0x6000, 0x8000};
+  // Test with ones, which will take more space to store due to 1/4 probability.
+  EXPECT_EQ(state.bits, 0x10000);
+  state.push_cdf(bitstream, 0, table);
+  for (int i = 0; i < 10; ++i) {
+    state.push_cdf(bitstream, 1, table);
+  }
+  EXPECT_EQ(bitstream.cur, bitstream.end - 1);
+  rans_state<uint32_t> ones_state = state;
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_EQ(1, state.pop_cdf(bitstream, table));
+  }
+  EXPECT_EQ(0, state.pop_cdf(bitstream, table));
+  EXPECT_EQ(bitstream.cur, bitstream.end);
+  // Test with zeroes, which won't offload any bits due to 3/4 probability.
+  state.push_cdf(bitstream, 1, table);
+  for (int i = 0; i < 10; ++i) {
+    state.push_cdf(bitstream, 0, table);
+  }
+  EXPECT_EQ(bitstream.cur, bitstream.end);
+  rans_state<uint32_t> zeros_state = state;
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_EQ(0, state.pop_cdf(bitstream, table));
+  }
+  EXPECT_EQ(1, state.pop_cdf(bitstream, table));
+  EXPECT_EQ(bitstream.cur, bitstream.end);
+  int num_zero_pushed = 0;
+  while (bitstream.cur == bitstream.end) {
+    state.push_cdf(bitstream, 0, table);
+    ++num_zero_pushed;
+  }
+  for (int i = 0; i < num_zero_pushed; ++i) {
+    EXPECT_EQ(0, state.pop_cdf(bitstream, table));
+  }
+  int num_ones_pushed = 0;
+  while (bitstream.cur == bitstream.end) {
+    state.push_cdf(bitstream, 1, table);
+    ++num_ones_pushed;
+  }
+  for (int i = 0; i < num_ones_pushed; ++i) {
+    EXPECT_EQ(1, state.pop_cdf(bitstream, table));
+  }
+  EXPECT_EQ(bitstream.cur, bitstream.end);
+  printf("Ones overflowed at %d, zeros overflowed at %d\n", num_ones_pushed,
+         num_zero_pushed);
+}
+
+TEST(RansTest, RansPushBitsOffload) {
+  rans_state<uint32_t> state;
+  std::array<uint16_t, 128> bitbuf;
+  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  int num_pushed = 0;
+  while (bitstream.cur == bitstream.end) {
+    state.push_bits(bitstream, 0, 1);
+    ++num_pushed;
+  }
+  for (int i = 0; i < num_pushed; ++i) {
+    EXPECT_EQ(0, state.pop_bits(bitstream, 1));
+  }
+  EXPECT_EQ(bitstream.cur, bitstream.end);
+  EXPECT_EQ(num_pushed, 16);
+}
+
+TEST(RansTest, RansSymFreqLast) {
+  using model_t = deferred_adaptive_model<uint16_t, 1024, 300, 36, 15>;
+  model_t model;
+  EXPECT_EQ(*model.cdf.sums.rbegin(), model_t::total_sum);
+  for (int converge_step = 0; converge_step < 15; ++converge_step) {
+    for (size_t i = 0; i < model_t::adaptation_interval; ++i) {
+      model.observe_symbol(299);
+    }
+  }
+  EXPECT_EQ(model_t::last_frequency_incr, 725);
+  EXPECT_EQ(*model.cdf.sums.rbegin(), model_t::total_sum);
+  EXPECT_EQ(model_t::frequency_incr, 31);
+  EXPECT_EQ(model.cdf.frequency(264), 1);
+  uint32_t sum = 0;
+  for (size_t i = 0; i < 300; ++i) {
+    sum += model.cdf.frequency(i);
+  }
+  EXPECT_EQ(sum, model_t::total_sum);
+  // This assertion doesn't work due to rounding.
+  // EXPECT_EQ(model.cdf.frequency(299),
+  //          model_t::last_frequency_incr + 1 +
+  //              model_t::frequency_incr * model_t::adaptation_interval);
+  // TODO: spec out and understand exactly how rounding should work and how to test it.
+  // I suspect the bonus +1 on last_frequency_incr is part of the mystery.
+  // https://fgiesen.wordpress.com/2015/02/20/mixing-discrete-probability-distributions/
+  // looks relevant.
+}

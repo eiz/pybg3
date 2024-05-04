@@ -22,6 +22,7 @@
 
 #define LIBBG3_IMPLEMENTATION
 #include "libbg3.h"
+#include "rans.h"
 
 #include <unordered_map>
 
