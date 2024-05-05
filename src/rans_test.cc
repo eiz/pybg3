@@ -158,14 +158,10 @@ TEST(RansTest, RansSymFreqLast) {
     sum += model.cdf.frequency(i);
   }
   EXPECT_EQ(sum, model_t::total_sum);
-  // This assertion doesn't work due to rounding.
-  // EXPECT_EQ(model.cdf.frequency(299),
-  //          model_t::last_frequency_incr + 1 +
-  //              model_t::frequency_incr * model_t::adaptation_interval);
-  // TODO: spec out and understand exactly how rounding should work and how to test it.
-  // I suspect the bonus +1 on last_frequency_incr is part of the mystery.
-  // https://fgiesen.wordpress.com/2015/02/20/mixing-discrete-probability-distributions/
-  // looks relevant.
+  // The +1 here is due to the way rounding is done when updating the CDF.
+  EXPECT_EQ(model.cdf.frequency(299) + 1,
+            model_t::last_frequency_incr + 1 +
+                model_t::frequency_incr * model_t::adaptation_interval);
 }
 
 TEST(RansTest, RegisterLruCache) {

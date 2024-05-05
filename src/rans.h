@@ -121,17 +121,14 @@ struct deferred_adaptive_model {
     adaptation_counter = (adaptation_counter + 1) % AdaptationInterval;
     if (adaptation_counter == 0) {
       frequency_accumulator[symbol] += last_frequency_incr;
-      T sum = 0;
+      // Sum in the next size up to avoid issues with unsigned division. -1 / 2 == -1 will
+      // not hold if we're averaging uint16_ts.
+      typename unsigned_t<sizeof(T) * 2>::type sum = 0;
       for (size_t i = 1; i <= VocabSize; ++i) {
         sum += frequency_accumulator[i - 1];
         // Trickier than it looks:
         // https://fgiesen.wordpress.com/2015/02/20/mixing-discrete-probability-distributions/
-        // There is an odd quirk to how rounding is done when updating the CDF in BitKnit.
-        // Basically, the averaging below is done in the original version using 32-bit
-        // unsigned integers, which causes -1 / 2 == -1 when the uint32_t result is
-        // truncated down to 16 bits.
-        cdf.sums[i] +=
-            static_cast<unsigned_t<sizeof(T) * 2>::type>(sum - cdf.sums[i]) / 2;
+        cdf.sums[i] += (sum - cdf.sums[i]) / 2;
         frequency_accumulator[i - 1] = 1;
       }
       return true;
