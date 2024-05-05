@@ -22,6 +22,8 @@
 
 #include "rans.h"
 
+#include <random>
+
 #include <gtest/gtest.h>
 
 using namespace rans;
@@ -117,6 +119,27 @@ TEST(RansTest, RansPushBitsOffload) {
   EXPECT_EQ(num_pushed, 16);
 }
 
+TEST(RansTest, RansPushCdfOffload) {
+  using model_t = deferred_adaptive_model<uint16_t, 1024, 256, 192, 15>;
+  std::array<uint8_t, 128> random_values;
+  std::mt19937 rng(12345);
+  std::uniform_int_distribution<uint8_t> dist(0, 63);
+  for (auto& value : random_values) {
+    value = dist(rng);
+  }
+  rans_state<uint32_t> state;
+  std::array<uint16_t, 128> bitbuf;
+  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  model_t model;
+  for (auto value : random_values) {
+    state.push_cdf(bitstream, value, model.cdf);
+  }
+  EXPECT_EQ(48, bitstream.end - bitstream.cur);  // ~6 bits/symbol
+  for (size_t i = random_values.size(); i > 0; --i) {
+    EXPECT_EQ(random_values[i - 1], state.pop_cdf(bitstream, model.cdf));
+  }
+}
+
 TEST(RansTest, RansSymFreqLast) {
   using model_t = deferred_adaptive_model<uint16_t, 1024, 300, 36, 15>;
   model_t model;
@@ -143,4 +166,15 @@ TEST(RansTest, RansSymFreqLast) {
   // I suspect the bonus +1 on last_frequency_incr is part of the mystery.
   // https://fgiesen.wordpress.com/2015/02/20/mixing-discrete-probability-distributions/
   // looks relevant.
+}
+
+TEST(RansTest, RegisterLruCache) {
+  register_lru_cache<uint32_t> cache;
+  cache.insert(42);
+  EXPECT_EQ(42, cache.entry(6));
+  cache.insert(420);
+  EXPECT_EQ(420, cache.entry(6));
+  EXPECT_EQ(42, cache.hit(7));
+  EXPECT_EQ(42, cache.entry(0));
+  EXPECT_EQ(420, cache.entry(7));
 }

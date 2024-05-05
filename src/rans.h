@@ -115,7 +115,7 @@ struct deferred_adaptive_model {
       frequency_accumulator[i] = 1;
     }
   }
-  void observe_symbol(T symbol) {
+  bool observe_symbol(T symbol) {
     frequency_accumulator[symbol] += frequency_incr;
     adaptation_counter = (adaptation_counter + 1) % AdaptationInterval;
     if (adaptation_counter == 0) {
@@ -123,10 +123,14 @@ struct deferred_adaptive_model {
       T sum = 0;
       for (size_t i = 1; i <= VocabSize; ++i) {
         sum += frequency_accumulator[i - 1];
+        // Trickier than it looks:
+        // https://fgiesen.wordpress.com/2015/02/20/mixing-discrete-probability-distributions/
         cdf.sums[i] += (sum - cdf.sums[i]) / 2;
         frequency_accumulator[i - 1] = 1;
       }
+      return true;
     }
+    return false;
   }
   cdf_t cdf;
   std::array<T, VocabSize> frequency_accumulator;
@@ -207,6 +211,9 @@ struct rans_state {
 
 // The idea for this way of managing the offset cache is described here:
 // https://fgiesen.wordpress.com/2016/03/07/repeated-match-offsets-in-bitknit/
+// tldr the items don't move, the indices just have a swizzle table stored in
+// 4bit fields in a register. we bump items by doing bitwise rotations on a
+// subset of the bits.
 template <typename T>
 struct register_lru_cache {
   std::array<T, 8> entries;
@@ -219,6 +226,10 @@ struct register_lru_cache {
   void insert(T value) {
     entries[entry_order >> 28] = entries[(entry_order >> 24) & 15];
     entries[(entry_order >> 24) & 15] = value;
+  }
+  uint32_t entry(uint32_t index) {
+    uint32_t slot = (entry_order >> (index * 4)) & 15;
+    return entries[slot];
   }
   uint32_t hit(uint32_t index) {
     uint32_t slot = (entry_order >> (index * 4)) & 15;
@@ -249,7 +260,8 @@ struct bitknit2_state {
   }
   void decode_quantum() {
     size_t offset = dst_cur - dst;
-    size_t boundary = std::min(size_t(dst_end - dst), (offset & 0xFFFF) + 0x10000);
+    size_t boundary =
+        std::min(size_t(dst_end - dst), (offset & ~size_t(0xFFFF)) + 0x10000);
     uint8_t* quantum_end = dst + boundary;
     if (!*src.cur) {
       src.cur++;
@@ -270,7 +282,7 @@ struct bitknit2_state {
     }
   }
   void decode_command() {
-    size_t model_index = (dst_cur - dst) & 3;
+    size_t model_index = (dst_cur - dst) % 4;
     uint32_t command = pop_model(command_word_models[model_index]);
     if (command < 256) {
       *dst_cur++ = command + dst_cur[-delta_offset];
@@ -322,14 +334,19 @@ struct bitknit2_state {
     return result;
   }
   // I hope sometimes saving those 2 bytes per quantum was worth it.
+  // See "tying the knot" https://fgiesen.wordpress.com/2015/12/21/rans-in-practice/
   void initialize_rans_state() {
     uint16_t init_0 = src.pop(), init_1 = src.pop();
     rans_state<uint32_t> merged_state((init_0 << 16) | init_1);
+    // The index of the highest set bit in state2.
     uint32_t split_point = merged_state.pop_bits(src, 4);
     state1.bits = merged_state.bits >> split_point;
     state1.refill(src);
+    // High bits from merged_state, low bits from stream
     state2.bits = (merged_state.bits << 16) | src.pop();
+    // Mask off high bits that went to state1
     state2.bits = state2.bits & ((1 << (16 + split_point)) - 1);
+    // Set high order bit
     state2.bits |= 1 << (16 + split_point);
   }
   uint8_t *dst, *dst_cur, *dst_end;

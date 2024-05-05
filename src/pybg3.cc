@@ -371,6 +371,54 @@ struct py_lsof_file {
   bg3_lsof_reader reader;
 };
 
+static const bg3_granny_compressor_ops pybg3_granny_ops = {
+    //
+};
+
+struct py_granny_reader {
+  static std::unique_ptr<py_granny_reader> from_path(py::str path) {
+    return std::make_unique<py_granny_reader>(path);
+  }
+  static std::unique_ptr<py_granny_reader> from_data(py::bytes data) {
+    return std::make_unique<py_granny_reader>(data);
+  }
+  py_granny_reader(py::str py_path) {
+    std::string path(py_path);
+    bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
+    if (status) {
+      throw std::runtime_error("Failed to open gr2 file");
+    }
+    status =
+        bg3_granny_reader_init(&reader, mapped.data, mapped.data_len, &pybg3_granny_ops);
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse gr2 file");
+    }
+    is_mapped_file = true;
+  }
+  py_granny_reader(py::bytes data) : data(data) {
+    std::string_view view(data);
+    // TODO: reader isn't const correct. This one is actually quite bad because the granny
+    // reader will actually modify data to apply its pointer fixups. We need to make it
+    // always copy on write.
+    bg3_status status = bg3_granny_reader_init(&reader, const_cast<char*>(view.data()),
+                                               view.size(), &pybg3_granny_ops);
+    if (status) {
+      throw std::runtime_error("Failed to parse gr2 file");
+    }
+  }
+  ~py_granny_reader() {
+    if (is_mapped_file) {
+      bg3_mapped_file_destroy(&mapped);
+    }
+    bg3_granny_reader_destroy(&reader);
+  }
+  bool is_mapped_file{false};
+  py::bytes data;
+  bg3_mapped_file mapped;
+  bg3_granny_reader reader;
+};
+
 struct py_loca_file {
   static std::unique_ptr<py_loca_file> from_path(py::str path) {
     return std::make_unique<py_loca_file>(path);
