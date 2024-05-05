@@ -38,6 +38,7 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <span>
 
 #define BITKNIT2_MAGIC 0x75B1
@@ -125,7 +126,12 @@ struct deferred_adaptive_model {
         sum += frequency_accumulator[i - 1];
         // Trickier than it looks:
         // https://fgiesen.wordpress.com/2015/02/20/mixing-discrete-probability-distributions/
-        cdf.sums[i] += (sum - cdf.sums[i]) / 2;
+        // There is an odd quirk to how rounding is done when updating the CDF in BitKnit.
+        // Basically, the averaging below is done in the original version using 32-bit
+        // unsigned integers, which causes -1 / 2 == -1 when the uint32_t result is
+        // truncated down to 16 bits.
+        cdf.sums[i] +=
+            static_cast<unsigned_t<sizeof(T) * 2>::type>(sum - cdf.sums[i]) / 2;
         frequency_accumulator[i - 1] = 1;
       }
       return true;
@@ -250,6 +256,7 @@ struct bitknit2_state {
     if (src.cur == src.end || *src.cur != BITKNIT2_MAGIC) {
       return false;
     }
+    src.pop();
     while (dst_cur < dst_end) {
       if (src.cur == src.end) {
         return false;
@@ -266,10 +273,10 @@ struct bitknit2_state {
     if (!*src.cur) {
       src.cur++;
       size_t copy_len =
-          std::min(size_t(src.end - src.cur), size_t(quantum_end - dst_cur));
+          std::min(size_t(src.end - src.cur) * 2, size_t(quantum_end - dst_cur));
       memcpy(dst_cur, src.cur, copy_len);
       dst_cur += copy_len;
-      src.cur += copy_len;
+      src.cur += copy_len / 2;
       return;
     }
     initialize_rans_state();
@@ -280,20 +287,26 @@ struct bitknit2_state {
       }
       decode_command();
     }
+    if (state1.bits != 0x10000 || state2.bits != 0x10000) {
+      throw std::runtime_error("rANS stream corrupted");
+    }
   }
   void decode_command() {
     size_t model_index = (dst_cur - dst) % 4;
     uint32_t command = pop_model(command_word_models[model_index]);
     if (command < 256) {
-      *dst_cur++ = command + dst_cur[-delta_offset];
+      *dst_cur = command + *(dst_cur - delta_offset);
+      dst_cur++;
       return;
     }
     uint32_t copy_length;
     if (command < 288) {
+      // Min copy length is 2, giving this variant a max copy length of 33.
       copy_length = command - 254;
     } else {
       uint32_t copy_length_length = command - 287;
       uint32_t copy_length_bits = pop_bits(copy_length_length);
+      // Min extension length is 1, giving this a min copy length of 34: (1 << 1) + 32
       copy_length = (1 << copy_length_length) + copy_length_bits + 32;
     }
     uint32_t copy_offset;
@@ -306,7 +319,11 @@ struct bitknit2_state {
       if (copy_offset_length >= 16) {
         copy_offset_bits = (copy_offset_bits << 16) | src.pop();
       }
-      copy_offset = (1 << copy_offset_length) + copy_offset_bits + cache_ref - 39;
+      // The weirdness is bc 32 << 0 == 32, so to support copy offsets <32, it's reduced
+      // by 32. This way a cache_ref of 8 and a copy_offset_length of 0 gives a copy
+      // offset of 1.
+      copy_offset =
+          (32 << copy_offset_length) + (copy_offset_bits << 5) - 32 + (cache_ref - 7);
       copy_offset_cache.insert(copy_offset);
     }
     if (copy_offset > dst_cur - dst) {
@@ -317,7 +334,7 @@ struct bitknit2_state {
     }
     delta_offset = copy_offset;
     for (size_t i = 0; i < copy_length; ++i) {
-      *dst_cur = dst_cur[-copy_offset];
+      *dst_cur = *(dst_cur - copy_offset);
       dst_cur++;
     }
   }

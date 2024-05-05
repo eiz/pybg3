@@ -200,6 +200,7 @@ BG3_ROOT = Path(os.environ.get("BG3_DATA", os.path.expanduser("~/l/bg3/Data")))
 GUSTAV = checktime("Gustav.pak", lambda: pak.PakFile(BG3_ROOT / "Gustav.pak"))
 SHARED = checktime("Shared.pak", lambda: pak.PakFile(BG3_ROOT / "Shared.pak"))
 ENGINE = checktime("Engine.pak", lambda: pak.PakFile(BG3_ROOT / "Engine.pak"))
+MODELS = checktime("Models.pak", lambda: pak.PakFile(BG3_ROOT / "Models.pak"))
 ROOT_TEMPLATES = RootTemplateSet()
 ASSETS = AssetTypeSet()
 BANKS = {}
@@ -252,6 +253,16 @@ def to_pxr_uuid(uuid):
     return f"U{uuid.replace('-', '_')}"
 
 
+def test_granny(path):
+    # ya, we def need a vfs here lol. tew dew
+    try:
+        data = MODELS.file_data(path)
+        granny = _pybg3._GrannyReader.from_data(data)
+        _pybg3.log(f"parsed {path}")
+    except Exception as e:
+        _pybg3.log(f"failed to load {path}: {repr(e)}")
+
+
 def process_nautiloid():
     TUT_Avernus_C = LEVELS["TUT_Avernus_C"]
     os.makedirs("out/Levels/TUT_Avernus_C", exist_ok=True)
@@ -268,11 +279,13 @@ def process_nautiloid():
             if visual_template is not None and len(visual_template) > 0:
                 visual = visuals.by_uuid.get(visual_template)
                 if visual is None:
-                    print(f"missing visual: {visual_template}")
+                    _pybg3.log(f"missing visual: {visual_template}")
                     pprint.pp(index.query(visual_template))
                 else:
                     source_file = visual.node.attrs.get("SourceFile")
-                    print(f"visual: {visual_template} ({source_file})")
+                    _pybg3.log(f"visual: {visual_template} ({source_file})")
+                    if source_file is not None:
+                        test_granny(source_file.value)
             key = obj.attrs["MapKey"]
             transform = obj.component("Transform")
             if transform is not None:

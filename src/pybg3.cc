@@ -22,6 +22,7 @@
 
 #define LIBBG3_IMPLEMENTATION
 #include "libbg3.h"
+#include "pybg3_granny.h"
 #include "rans.h"
 
 #include <unordered_map>
@@ -104,8 +105,8 @@ struct py_lspk_file {
     if (idx >= lspk.num_files) {
       throw std::runtime_error("Index out of bounds");
     }
-    std::string buf(lspk.manifest[idx].uncompressed_size, 0);
     size_t size = file_size(idx);
+    std::string buf(size, 0);
     bg3_status status =
         bg3_lspk_file_extract(&lspk, &lspk.manifest[idx], buf.data(), &size);
     if (status) {
@@ -371,10 +372,6 @@ struct py_lsof_file {
   bg3_lsof_reader reader;
 };
 
-static const bg3_granny_compressor_ops pybg3_granny_ops = {
-    //
-};
-
 struct py_granny_reader {
   static std::unique_ptr<py_granny_reader> from_path(py::str path) {
     return std::make_unique<py_granny_reader>(path);
@@ -508,10 +505,16 @@ struct py_index_reader {
   bg3_index_reader reader;
 };
 
+void pybg3_log(std::string const& message) {
+  setvbuf(stdout, NULL, _IONBF, 0);
+  printf("%s\n", message.c_str());
+}
+
 PYBIND11_MODULE(_pybg3, m) {
   m.doc() = "python libbg3 bindings";
   m.def("osiris_compile_path", &osiris_compile_path, "Compile an osiris save");
   m.def("osiris_decompile_path", &osiris_decompile_path, "Decompile an osiris save");
+  m.def("log", &pybg3_log, "Log a message");
   py::class_<py_lspk_file>(m, "_LspkFile")
       .def(py::init<const std::string&>())
       .def("file_name", &py_lspk_file::file_name)
@@ -539,4 +542,7 @@ PYBIND11_MODULE(_pybg3, m) {
   py::class_<py_index_reader>(m, "_IndexReader")
       .def(py::init<const std::string&>())
       .def("query", &py_index_reader::query);
+  py::class_<py_granny_reader>(m, "_GrannyReader")
+      .def_static("from_path", &py_granny_reader::from_path)
+      .def_static("from_data", &py_granny_reader::from_data);
 }

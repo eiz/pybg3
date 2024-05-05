@@ -1,0 +1,3 @@
+command script import scripts/bk_trace.py
+run
+quit
