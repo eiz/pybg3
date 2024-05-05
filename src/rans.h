@@ -41,11 +41,16 @@
 #include <cstdio>
 #include <cstring>
 #include <span>
+#include <stdexcept>
 
 #define BITKNIT2_MAGIC 0x75B1
 
 #ifndef forceinline
+#ifdef NDEBUG
 #define forceinline __attribute__((always_inline))
+#else
+#define forceinline
+#endif
 #endif
 
 namespace rans {
@@ -69,13 +74,15 @@ struct unsigned_t<8> {
   using type = uint64_t;
 };
 
-template <typename T, size_t VocabSize, size_t FrequencyBits>
+template <typename T, size_t VocabSize, size_t FrequencyBits, size_t LookupBits>
 struct frequency_table {
   static constexpr size_t frequency_bits = FrequencyBits;
   static constexpr size_t vocab_size = VocabSize;
+  static constexpr size_t lookup_shift = FrequencyBits - LookupBits;
   std::array<T, VocabSize + 1> sums;
+  std::array<T, 1 << LookupBits> lookup;
   // Intentionally (very!) slow binary search method.
-  T forceinline find_symbol(T code) const {
+  T forceinline find_symbol_slow(T code) const {
     size_t lo = 0, hi = VocabSize - 1;
     while (lo <= hi) {
       size_t mid = lo + ((hi - lo) / 2);
@@ -91,6 +98,23 @@ struct frequency_table {
     }
     return VocabSize;
   }
+  T forceinline find_symbol(T code) const {
+    if constexpr (LookupBits == 0) {
+      return find_symbol_slow(code);
+    } else {
+      size_t sym = lookup[code >> lookup_shift];
+      while (code >= sums[sym + 1]) {
+        sym++;
+      }
+      return sym;
+    }
+    return VocabSize;
+  }
+  void finish_update() {
+    for (size_t i = 0; i < lookup.size(); ++i) {
+      lookup[i] = find_symbol_slow(i << lookup_shift);
+    }
+  }
   T forceinline frequency(T symbol) const { return sums[symbol + 1] - sums[symbol]; }
   T forceinline sum_below(T symbol) const { return sums[symbol]; }
 };
@@ -99,9 +123,10 @@ template <typename T,
           int AdaptationInterval,
           size_t VocabSize,
           size_t NumMinProbableSymbols,
-          size_t FrequencyBits>
+          size_t FrequencyBits,
+          size_t LookupBits>
 struct deferred_adaptive_model {
-  using cdf_t = frequency_table<T, VocabSize, FrequencyBits>;
+  using cdf_t = frequency_table<T, VocabSize, FrequencyBits, LookupBits>;
   static constexpr size_t num_equiprobable_symbols = VocabSize - NumMinProbableSymbols;
   static constexpr size_t num_min_probable_symbols = NumMinProbableSymbols;
   static constexpr size_t adaptation_interval = AdaptationInterval;
@@ -120,6 +145,7 @@ struct deferred_adaptive_model {
     for (size_t i = 0; i < VocabSize; ++i) {
       frequency_accumulator[i] = 1;
     }
+    cdf.finish_update();
   }
   bool forceinline observe_symbol(T symbol) {
     frequency_accumulator[symbol] += frequency_incr;
@@ -136,6 +162,7 @@ struct deferred_adaptive_model {
         cdf.sums[i] += (sum - cdf.sums[i]) / 2;
         frequency_accumulator[i - 1] = 1;
       }
+      cdf.finish_update();
       return true;
     }
     return false;
@@ -370,10 +397,11 @@ struct bitknit2_state {
   uint8_t *dst, *dst_cur, *dst_end;
   rans_bitstream<uint16_t> src;
   rans_state<uint32_t> state1, state2;
-  std::array<deferred_adaptive_model<uint16_t, 1024, 300, 36, 15>, 4> command_word_models;
-  std::array<deferred_adaptive_model<uint16_t, 1024, 40, 0, 15>, 4>
+  std::array<deferred_adaptive_model<uint16_t, 1024, 300, 36, 15, 8>, 4>
+      command_word_models;
+  std::array<deferred_adaptive_model<uint16_t, 1024, 40, 0, 15, 4>, 4>
       cache_reference_models;
-  deferred_adaptive_model<uint16_t, 1024, 21, 0, 15> copy_offset_model;
+  deferred_adaptive_model<uint16_t, 1024, 21, 0, 15, 6> copy_offset_model;
   register_lru_cache<uint32_t> copy_offset_cache;
   size_t delta_offset{1};
 };

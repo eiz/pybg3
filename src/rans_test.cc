@@ -55,8 +55,9 @@ TEST(RansTest, RansStateCdf) {
   std::array<uint16_t, 128> bitbuf;
   rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   rans_state<uint32_t> state;
-  frequency_table<uint16_t, 2, 15> table;
+  frequency_table<uint16_t, 2, 15, 1> table;
   table.sums = {0, 0x6000, 0x8000};
+  table.finish_update();
   // Test with ones, which will take more space to store due to 1/4 probability.
   EXPECT_EQ(state.bits, 0x10000);
   state.push_cdf(bitstream, 0, table);
@@ -107,8 +108,9 @@ TEST(RansTest, RansStateCdf64) {
   std::array<uint32_t, 128> bitbuf;
   rans_bitstream<uint32_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   rans_state<uint64_t> state;
-  frequency_table<uint32_t, 2, 31> table;
+  frequency_table<uint32_t, 2, 31, 6> table;
   table.sums = {0, 0x7FFF0000, 0x80000000};
+  table.finish_update();
   int64_t num_zero_pushed = 0;
   while (bitstream.cur == bitstream.end && num_zero_pushed < 1000000) {
     state.push_cdf(bitstream, 0, table);
@@ -147,7 +149,7 @@ TEST(RansTest, RansPushBitsOffload) {
 }
 
 TEST(RansTest, RansPushCdfOffload) {
-  using model_t = deferred_adaptive_model<uint16_t, 1024, 256, 192, 15>;
+  using model_t = deferred_adaptive_model<uint16_t, 1024, 256, 192, 15, 6>;
   std::array<uint8_t, 128> random_values;
   std::mt19937 rng(12345);
   std::uniform_int_distribution<uint8_t> dist(0, 63);
@@ -168,7 +170,7 @@ TEST(RansTest, RansPushCdfOffload) {
 }
 
 TEST(RansTest, RansPushCdfOffload64) {
-  using model_t = deferred_adaptive_model<uint32_t, 1024, 256, 192, 15>;
+  using model_t = deferred_adaptive_model<uint32_t, 1024, 256, 192, 15, 6>;
   std::array<uint8_t, 128> random_values;
   std::mt19937 rng(12345);
   std::uniform_int_distribution<uint8_t> dist(0, 63);
@@ -189,7 +191,7 @@ TEST(RansTest, RansPushCdfOffload64) {
 }
 
 TEST(RansTest, RansSymFreqLast) {
-  using model_t = deferred_adaptive_model<uint16_t, 1024, 300, 36, 15>;
+  using model_t = deferred_adaptive_model<uint16_t, 1024, 300, 36, 15, 9>;
   model_t model;
   EXPECT_EQ(*model.cdf.sums.rbegin(), model_t::total_sum);
   for (int converge_step = 0; converge_step < 15; ++converge_step) {
