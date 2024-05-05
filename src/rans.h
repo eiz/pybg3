@@ -82,7 +82,7 @@ struct frequency_table {
   std::array<T, VocabSize + 1> sums;
   std::array<T, 1 << LookupBits> lookup;
   // Intentionally (very!) slow binary search method.
-  T forceinline find_symbol_slow(T code) const {
+  size_t forceinline find_symbol_slow(size_t code) const {
     size_t lo = 0, hi = VocabSize - 1;
     while (lo <= hi) {
       size_t mid = lo + ((hi - lo) / 2);
@@ -98,7 +98,7 @@ struct frequency_table {
     }
     return VocabSize;
   }
-  T forceinline find_symbol(T code) const {
+  size_t forceinline find_symbol(size_t code) const {
     if constexpr (LookupBits == 0) {
       return find_symbol_slow(code);
     } else {
@@ -111,8 +111,14 @@ struct frequency_table {
     return VocabSize;
   }
   void finish_update() {
-    for (size_t i = 0; i < lookup.size(); ++i) {
-      lookup[i] = find_symbol_slow(i << lookup_shift);
+    size_t code = 0, sym = 0;
+    while (code < (T(1) << FrequencyBits)) {
+      if (code >= sums[sym] && code < sums[sym + 1]) {
+        lookup[code >> lookup_shift] = sym;
+        code += T(1) << lookup_shift;
+      } else {
+        sym++;
+      }
     }
   }
   T forceinline frequency(T symbol) const { return sums[symbol + 1] - sums[symbol]; }
@@ -225,9 +231,9 @@ struct rans_state {
   template <typename CDF>
   Bits forceinline pop_cdf(rans_bitstream<stream_bits_t>& stream, CDF const& cdf) {
     static_assert(CDF::frequency_bits < refill_shift);
-    Bits code = bits & ((Bits(1) << CDF::frequency_bits) - 1);
-    Bits sym = cdf.find_symbol(code);
-    Bits freq = cdf.frequency(sym);
+    size_t code = bits & ((Bits(1) << CDF::frequency_bits) - 1);
+    size_t sym = cdf.find_symbol(code);
+    size_t freq = cdf.frequency(sym);
     bits = (bits >> CDF::frequency_bits) * freq + code - cdf.sum_below(sym);
     maybe_refill(stream);
     return sym;
@@ -313,13 +319,13 @@ struct bitknit2_state {
       *dst_cur++ = pop_bits(8);
     }
     while (dst_cur < quantum_end) {
-      decode_command(quantum_end);
+      decode_command();
     }
     if (state1.bits != 0x10000 || state2.bits != 0x10000) {
       throw std::runtime_error("rANS stream corrupted");
     }
   }
-  void forceinline decode_command(uint8_t* quantum_end) {
+  void forceinline decode_command() {
     size_t model_index = (dst_cur - dst) % 4;
     uint32_t command = pop_model(command_word_models[model_index]);
     if (command < 256) {
@@ -396,12 +402,14 @@ struct bitknit2_state {
   }
   uint8_t *dst, *dst_cur, *dst_end;
   rans_bitstream<uint16_t> src;
+
+ private:
   rans_state<uint32_t> state1, state2;
-  std::array<deferred_adaptive_model<uint16_t, 1024, 300, 36, 15, 8>, 4>
+  std::array<deferred_adaptive_model<uint16_t, 1024, 300, 36, 15, 10>, 4>
       command_word_models;
-  std::array<deferred_adaptive_model<uint16_t, 1024, 40, 0, 15, 4>, 4>
+  std::array<deferred_adaptive_model<uint16_t, 1024, 40, 0, 15, 8>, 4>
       cache_reference_models;
-  deferred_adaptive_model<uint16_t, 1024, 21, 0, 15, 6> copy_offset_model;
+  deferred_adaptive_model<uint16_t, 1024, 21, 0, 15, 8> copy_offset_model;
   register_lru_cache<uint32_t> copy_offset_cache;
   size_t delta_offset{1};
 };
