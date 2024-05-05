@@ -96,7 +96,7 @@ struct frequency_table {
         return mid;
       }
     }
-    return VocabSize;
+    __builtin_unreachable();
   }
   size_t forceinline find_symbol(size_t code) const {
     if constexpr (LookupBits == 0) {
@@ -108,9 +108,11 @@ struct frequency_table {
       }
       return sym;
     }
-    return VocabSize;
   }
   void finish_update() {
+    if constexpr (LookupBits == 0) {
+      return;
+    }
     size_t code = 0, sym = 0;
     while (code < (T(1) << FrequencyBits)) {
       if (code >= sums[sym] && code < sums[sym + 1]) {
@@ -300,7 +302,11 @@ struct bitknit2_state {
     }
     return true;
   }
-  void forceinline decode_quantum() {
+  void decode_quantum() {
+    // This sucks, but these need to be passed around as locals because otherwise the
+    // compiler will generate actual memory stores each time state1 and state2 are
+    // swapped, which very much defeats the purpose.
+    rans_state<uint32_t> state1, state2;
     size_t offset = dst_cur - dst;
     size_t boundary =
         std::min(size_t(dst_end - dst), (offset & ~size_t(0xFFFF)) + 0x10000);
@@ -314,42 +320,46 @@ struct bitknit2_state {
       src.cur += copy_len / 2;
       return;
     }
-    initialize_rans_state();
+    initialize_rans_state(state1, state2);
     if (dst_cur == dst) {
-      *dst_cur++ = pop_bits(8);
+      *dst_cur++ = pop_bits(8, state1, state2);
     }
+#pragma clang loop unroll_count(2)
     while (dst_cur < quantum_end) {
-      decode_command();
+      size_t model_index = size_t(dst_cur) % 4;
+      uint32_t command = pop_model(command_word_models[model_index], state1, state2);
+      if (command >= 256) {
+        decode_copy(command, state1, state2);
+        continue;
+      }
+      *dst_cur = command + *(dst_cur - delta_offset);
+      dst_cur++;
     }
     if (state1.bits != 0x10000 || state2.bits != 0x10000) {
       throw std::runtime_error("rANS stream corrupted");
     }
   }
-  void forceinline decode_command() {
-    size_t model_index = (dst_cur - dst) % 4;
-    uint32_t command = pop_model(command_word_models[model_index]);
-    if (command < 256) {
-      *dst_cur = command + *(dst_cur - delta_offset);
-      dst_cur++;
-      return;
-    }
+  void decode_copy(uint32_t command,
+                   rans_state<uint32_t>& state1,
+                   rans_state<uint32_t>& state2) {
+    size_t model_index = size_t(dst_cur) % 4;
     uint32_t copy_length;
     if (command < 288) {
       // Min copy length is 2, giving this variant a max copy length of 33.
       copy_length = command - 254;
     } else {
       uint32_t copy_length_length = command - 287;
-      uint32_t copy_length_bits = pop_bits(copy_length_length);
+      uint32_t copy_length_bits = pop_bits(copy_length_length, state1, state2);
       // Min extension length is 1, giving this a min copy length of 34: (1 << 1) + 32
       copy_length = (1 << copy_length_length) + copy_length_bits + 32;
     }
     uint32_t copy_offset;
-    uint32_t cache_ref = pop_model(cache_reference_models[model_index]);
+    uint32_t cache_ref = pop_model(cache_reference_models[model_index], state1, state2);
     if (cache_ref < 8) {
       copy_offset = copy_offset_cache.hit(cache_ref);
     } else {
-      uint32_t copy_offset_length = pop_model(copy_offset_model);
-      uint32_t copy_offset_bits = pop_bits(copy_offset_length % 16);
+      uint32_t copy_offset_length = pop_model(copy_offset_model, state1, state2);
+      uint32_t copy_offset_bits = pop_bits(copy_offset_length % 16, state1, state2);
       if (copy_offset_length >= 16) {
         copy_offset_bits = (copy_offset_bits << 16) | src.pop();
       }
@@ -372,13 +382,17 @@ struct bitknit2_state {
       dst_cur++;
     }
   }
-  uint32_t forceinline pop_bits(int nbits) {
+  uint32_t forceinline pop_bits(int nbits,
+                                rans_state<uint32_t>& state1,
+                                rans_state<uint32_t>& state2) {
     uint32_t result = state1.pop_bits(src, nbits);
     std::swap(state1, state2);
     return result;
   }
   template <typename Model>
-  uint32_t forceinline pop_model(Model& model) {
+  uint32_t forceinline pop_model(Model& model,
+                                 rans_state<uint32_t>& state1,
+                                 rans_state<uint32_t>& state2) {
     uint32_t result = state1.pop_cdf(src, model.cdf);
     model.observe_symbol(result);
     std::swap(state1, state2);
@@ -386,7 +400,7 @@ struct bitknit2_state {
   }
   // I hope sometimes saving those 2 bytes per quantum was worth it.
   // See "tying the knot" https://fgiesen.wordpress.com/2015/12/21/rans-in-practice/
-  void initialize_rans_state() {
+  void initialize_rans_state(rans_state<uint32_t>& state1, rans_state<uint32_t>& state2) {
     uint16_t init_0 = src.pop(), init_1 = src.pop();
     rans_state<uint32_t> merged_state((init_0 << 16) | init_1);
     // The index of the highest set bit in state2.
@@ -404,12 +418,11 @@ struct bitknit2_state {
   rans_bitstream<uint16_t> src;
 
  private:
-  rans_state<uint32_t> state1, state2;
   std::array<deferred_adaptive_model<uint16_t, 1024, 300, 36, 15, 10>, 4>
       command_word_models;
-  std::array<deferred_adaptive_model<uint16_t, 1024, 40, 0, 15, 8>, 4>
+  std::array<deferred_adaptive_model<uint16_t, 1024, 40, 0, 15, 10>, 4>
       cache_reference_models;
-  deferred_adaptive_model<uint16_t, 1024, 21, 0, 15, 8> copy_offset_model;
+  deferred_adaptive_model<uint16_t, 1024, 21, 0, 15, 10> copy_offset_model;
   register_lru_cache<uint32_t> copy_offset_cache;
   size_t delta_offset{1};
 };
