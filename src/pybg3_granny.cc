@@ -11,7 +11,6 @@ void* pybg3_granny_begin_file_decompression(int type,
                                             void* uncompressed_data,
                                             uint32_t buf_size,
                                             void* buffer) {
-  // printf("context init\n");
   if (type != bg3_granny_compression_bitknit2 || endian_swapped) {
     return nullptr;
   }
@@ -28,14 +27,10 @@ bool pybg3_granny_decompress_incremental(void* context,
       (uint16_t*)compressed_data, (uint16_t*)compressed_data,
       (uint16_t*)((uint8_t*)compressed_data + compressed_size));
   try {
-    // printf("Begin decompression\n");
     bool result = ctx->decode();
-    // printf("End decompression %d\n", result);
-    // bg3_hex_dump(ctx->dst, ctx->dst_cur - ctx->dst);
     return result;
   } catch (std::exception& e) {
-    printf("Decompression error: %s\n", e.what());
-    // bg3_hex_dump(ctx->dst, ctx->dst_cur - ctx->dst);
+    bg3_error("Decompression error: %s\n", e.what());
     return false;
   }
 }

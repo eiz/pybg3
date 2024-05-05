@@ -103,6 +103,33 @@ TEST(RansTest, RansStateCdf) {
          num_zero_pushed);
 }
 
+TEST(RansTest, RansStateCdf64) {
+  std::array<uint32_t, 128> bitbuf;
+  rans_bitstream<uint32_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  rans_state<uint64_t> state;
+  frequency_table<uint32_t, 2, 31> table;
+  table.sums = {0, 0x7FFF0000, 0x80000000};
+  int64_t num_zero_pushed = 0;
+  while (bitstream.cur == bitstream.end && num_zero_pushed < 1000000) {
+    state.push_cdf(bitstream, 0, table);
+    ++num_zero_pushed;
+  }
+  for (int i = 0; i < num_zero_pushed; ++i) {
+    EXPECT_EQ(0, state.pop_cdf(bitstream, table));
+  }
+  int64_t num_ones_pushed = 0;
+  while (bitstream.cur == bitstream.end) {
+    state.push_cdf(bitstream, 1, table);
+    ++num_ones_pushed;
+  }
+  for (int i = 0; i < num_ones_pushed; ++i) {
+    EXPECT_EQ(1, state.pop_cdf(bitstream, table));
+  }
+  EXPECT_EQ(bitstream.cur, bitstream.end);
+  printf("Ones overflowed at %lld, zeros overflowed at %lld\n", num_ones_pushed,
+         num_zero_pushed);
+}
+
 TEST(RansTest, RansPushBitsOffload) {
   rans_state<uint32_t> state;
   std::array<uint16_t, 128> bitbuf;
@@ -135,6 +162,27 @@ TEST(RansTest, RansPushCdfOffload) {
     state.push_cdf(bitstream, value, model.cdf);
   }
   EXPECT_EQ(48, bitstream.end - bitstream.cur);  // ~6 bits/symbol
+  for (size_t i = random_values.size(); i > 0; --i) {
+    EXPECT_EQ(random_values[i - 1], state.pop_cdf(bitstream, model.cdf));
+  }
+}
+
+TEST(RansTest, RansPushCdfOffload64) {
+  using model_t = deferred_adaptive_model<uint32_t, 1024, 256, 192, 15>;
+  std::array<uint8_t, 128> random_values;
+  std::mt19937 rng(12345);
+  std::uniform_int_distribution<uint8_t> dist(0, 63);
+  for (auto& value : random_values) {
+    value = dist(rng);
+  }
+  rans_state<uint64_t> state;
+  std::array<uint32_t, 128> bitbuf;
+  rans_bitstream<uint32_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  model_t model;
+  for (auto value : random_values) {
+    state.push_cdf(bitstream, value, model.cdf);
+  }
+  EXPECT_EQ(24, bitstream.end - bitstream.cur);  // ~6 bits/symbol
   for (size_t i = random_values.size(); i > 0; --i) {
     EXPECT_EQ(random_values[i - 1], state.pop_cdf(bitstream, model.cdf));
   }

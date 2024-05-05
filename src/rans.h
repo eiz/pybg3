@@ -38,10 +38,15 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <span>
 
 #define BITKNIT2_MAGIC 0x75B1
+
+#ifndef forceinline
+#define forceinline __attribute__((always_inline))
+#endif
 
 namespace rans {
 template <int NumBytes>
@@ -69,11 +74,11 @@ struct frequency_table {
   static constexpr size_t frequency_bits = FrequencyBits;
   static constexpr size_t vocab_size = VocabSize;
   std::array<T, VocabSize + 1> sums;
-  // Intentionally slow binary search method.
-  T find_symbol(T code) const {
-    T lo = 0, hi = VocabSize - 1;
+  // Intentionally (very!) slow binary search method.
+  T forceinline find_symbol(T code) const {
+    size_t lo = 0, hi = VocabSize - 1;
     while (lo <= hi) {
-      T mid = lo + ((hi - lo) / 2);
+      size_t mid = lo + ((hi - lo) / 2);
       T upper_bound = sums[mid + 1] - 1;
       T lower_bound = sums[mid];
       if (code > upper_bound) {
@@ -86,8 +91,8 @@ struct frequency_table {
     }
     return VocabSize;
   }
-  T frequency(T symbol) const { return sums[symbol + 1] - sums[symbol]; }
-  T sum_below(T symbol) const { return sums[symbol]; }
+  T forceinline frequency(T symbol) const { return sums[symbol + 1] - sums[symbol]; }
+  T forceinline sum_below(T symbol) const { return sums[symbol]; }
 };
 
 template <typename T,
@@ -116,7 +121,7 @@ struct deferred_adaptive_model {
       frequency_accumulator[i] = 1;
     }
   }
-  bool observe_symbol(T symbol) {
+  bool forceinline observe_symbol(T symbol) {
     frequency_accumulator[symbol] += frequency_incr;
     adaptation_counter = (adaptation_counter + 1) % AdaptationInterval;
     if (adaptation_counter == 0) {
@@ -143,13 +148,13 @@ struct deferred_adaptive_model {
 template <typename T>
 struct rans_bitstream {
   rans_bitstream(T* begin, T* cur, T* end) : begin(begin), cur(cur), end(end) {}
-  void push(T word) {
+  void forceinline push(T word) {
     if (cur == begin) {
       throw std::out_of_range("bitstream overflow");
     }
     *--cur = word;
   }
-  T pop() {
+  T forceinline pop() {
     if (cur == end) {
       throw std::out_of_range("unexpected end of bitstream");
     }
@@ -165,24 +170,24 @@ struct rans_state {
   static constexpr Bits refill_threshold = Bits(1) << refill_shift;
   rans_state(Bits bits) : bits(bits) {}
   rans_state() : bits(refill_threshold) {}
-  void push_bits(rans_bitstream<stream_bits_t>& stream, Bits sym, int nbits) {
+  void forceinline push_bits(rans_bitstream<stream_bits_t>& stream, Bits sym, int nbits) {
     Bits mask = ~(~Bits(0) >> nbits);
     if (bits & mask) {
       offload(stream);
     }
     bits = (bits << nbits) | (sym & ((Bits(1) << nbits) - 1));
   }
-  Bits pop_bits(rans_bitstream<stream_bits_t>& stream, int nbits) {
-    if (nbits >= refill_shift) {
-      throw std::invalid_argument("bit count too large");
-    }
+  Bits forceinline pop_bits(rans_bitstream<stream_bits_t>& stream, int nbits) {
+    assert(nbits < refill_shift);
     Bits sym = bits & ((Bits(1) << nbits) - 1);
     bits >>= nbits;
-    refill(stream);
+    maybe_refill(stream);
     return sym;
   }
   template <typename CDF>
-  void push_cdf(rans_bitstream<stream_bits_t>& stream, Bits sym, CDF const& cdf) {
+  void forceinline push_cdf(rans_bitstream<stream_bits_t>& stream,
+                            Bits sym,
+                            CDF const& cdf) {
     Bits mask = ~(~Bits(0) >> CDF::frequency_bits);
     Bits freq = cdf.frequency(sym);
     if ((bits / freq) & mask) {
@@ -191,21 +196,21 @@ struct rans_state {
     bits = ((bits / freq) << CDF::frequency_bits) + (bits % freq) + cdf.sum_below(sym);
   }
   template <typename CDF>
-  Bits pop_cdf(rans_bitstream<stream_bits_t>& stream, CDF const& cdf) {
+  Bits forceinline pop_cdf(rans_bitstream<stream_bits_t>& stream, CDF const& cdf) {
     static_assert(CDF::frequency_bits < refill_shift);
     Bits code = bits & ((Bits(1) << CDF::frequency_bits) - 1);
     Bits sym = cdf.find_symbol(code);
     Bits freq = cdf.frequency(sym);
     bits = (bits >> CDF::frequency_bits) * freq + code - cdf.sum_below(sym);
-    refill(stream);
+    maybe_refill(stream);
     return sym;
   }
-  void refill(rans_bitstream<stream_bits_t>& stream) {
+  void forceinline maybe_refill(rans_bitstream<stream_bits_t>& stream) {
     if (bits < refill_threshold) {
       bits = (bits << refill_shift) | stream.pop();
     }
   }
-  void offload(rans_bitstream<stream_bits_t>& stream) {
+  void forceinline offload(rans_bitstream<stream_bits_t>& stream) {
     stream.push(bits & (refill_threshold - 1));
     bits >>= refill_shift;
   }
@@ -214,9 +219,9 @@ struct rans_state {
 
 // The idea for this way of managing the offset cache is described here:
 // https://fgiesen.wordpress.com/2016/03/07/repeated-match-offsets-in-bitknit/
-// tldr the items don't move, the indices just have a swizzle table stored in
-// 4bit fields in a register. we bump items by doing bitwise rotations on a
-// subset of the bits.
+// tldr the items don't move on a cache hit, the indices just have a swizzle
+// table stored in 4bit fields in a register. we bump items by doing bitwise
+// rotations on a subset of the bits.
 template <typename T>
 struct register_lru_cache {
   std::array<T, 8> entries;
@@ -234,7 +239,7 @@ struct register_lru_cache {
     uint32_t slot = (entry_order >> (index * 4)) & 15;
     return entries[slot];
   }
-  uint32_t hit(uint32_t index) {
+  uint32_t forceinline hit(uint32_t index) {
     uint32_t slot = (entry_order >> (index * 4)) & 15;
     uint32_t rotate_mask = (16 << (index * 4)) - 1;
     uint32_t rotated_order = ((entry_order << 4) | slot) & rotate_mask;
@@ -262,7 +267,7 @@ struct bitknit2_state {
     }
     return true;
   }
-  void decode_quantum() {
+  void forceinline decode_quantum() {
     size_t offset = dst_cur - dst;
     size_t boundary =
         std::min(size_t(dst_end - dst), (offset & ~size_t(0xFFFF)) + 0x10000);
@@ -277,18 +282,17 @@ struct bitknit2_state {
       return;
     }
     initialize_rans_state();
+    if (dst_cur == dst) {
+      *dst_cur++ = pop_bits(8);
+    }
     while (dst_cur < quantum_end) {
-      if (dst_cur == dst) {
-        *dst_cur++ = pop_bits(8);
-        continue;
-      }
-      decode_command();
+      decode_command(quantum_end);
     }
     if (state1.bits != 0x10000 || state2.bits != 0x10000) {
       throw std::runtime_error("rANS stream corrupted");
     }
   }
-  void decode_command() {
+  void forceinline decode_command(uint8_t* quantum_end) {
     size_t model_index = (dst_cur - dst) % 4;
     uint32_t command = pop_model(command_word_models[model_index]);
     if (command < 256) {
@@ -335,13 +339,13 @@ struct bitknit2_state {
       dst_cur++;
     }
   }
-  uint32_t pop_bits(int nbits) {
+  uint32_t forceinline pop_bits(int nbits) {
     uint32_t result = state1.pop_bits(src, nbits);
     std::swap(state1, state2);
     return result;
   }
   template <typename Model>
-  uint32_t pop_model(Model& model) {
+  uint32_t forceinline pop_model(Model& model) {
     uint32_t result = state1.pop_cdf(src, model.cdf);
     model.observe_symbol(result);
     std::swap(state1, state2);
@@ -355,7 +359,7 @@ struct bitknit2_state {
     // The index of the highest set bit in state2.
     uint32_t split_point = merged_state.pop_bits(src, 4);
     state1.bits = merged_state.bits >> split_point;
-    state1.refill(src);
+    state1.maybe_refill(src);
     // High bits from merged_state, low bits from stream
     state2.bits = (merged_state.bits << 16) | src.pop();
     // Mask off high bits that went to state1

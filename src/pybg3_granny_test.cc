@@ -32,18 +32,19 @@ TEST(PyBg3GrannyTest, PyBg3GrannyTestFile) {
                                                GRANNY_OP(decompress_incremental),
                                                GRANNY_OP(end_file_decompression)};
   }
-  std::string base_path = "/Users/eiz/code/bg3do/Data/Models";
+  std::string base_path = "/Users/eiz/code/bg3do/Data/Gustav";
   std::string test_path =
-      "Generated/Public/Shared/Assets/Decoration/MindFlayer/DEC_MF_Colony_Flesh_ABC/"
-      "Resources/DEC_MF_Colony_Flesh_Anchor_A.GR2";
+      "Generated/Public/GustavDev/Assets/HLOD/BGH_SteelWatchFoundry_B/HLOD_1_0_0_1.GR2";
   std::string full_path = base_path + "/" + test_path;
   bg3_mapped_file mapped;
   if (bg3_mapped_file_init_ro(&mapped, full_path.c_str())) {
     throw std::runtime_error("Failed to open file");
   }
-  bg3_granny_reader reader;
-  if (bg3_granny_reader_init(&reader, mapped.data, mapped.data_len, &compress_ops)) {
-    throw std::runtime_error("Failed to initialize granny reader");
+  for (int i = 0; i < 10; ++i) {
+    bg3_granny_reader reader;
+    if (bg3_granny_reader_init(&reader, mapped.data, mapped.data_len, &compress_ops)) {
+      throw std::runtime_error("Failed to initialize granny reader");
+    }
+    bg3_granny_reader_destroy(&reader);
   }
-  bg3_granny_reader_destroy(&reader);
 }
