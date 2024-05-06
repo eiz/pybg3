@@ -514,6 +514,16 @@ static size_t granny_data_type_size(bg3_granny_data_type dt) {
   }
 }
 
+static size_t granny_field_size(bg3_granny_type_info* ti);
+
+static size_t granny_object_size(bg3_granny_type_info* ti) {
+  size_t object_size = 0;
+  for (bg3_granny_type_info* rti = ti; rti->type != bg3_granny_dt_end; ++rti) {
+    object_size += granny_field_size(rti);
+  }
+  return object_size;
+}
+
 static size_t granny_field_size(bg3_granny_type_info* ti) {
   size_t field_size = granny_data_type_size(ti->type);
   if (ti->type == bg3_granny_dt_inline) {
@@ -528,28 +538,71 @@ static size_t granny_field_size(bg3_granny_type_info* ti) {
   return field_size;
 }
 
+struct py_granny_span {
+  py_granny_span(std::shared_ptr<py_granny_reader> reader,
+                 bg3_granny_type_info* type_info,
+                 void* data,
+                 size_t num_elements)
+      : reader(std::move(reader)),
+        type_info(type_info),
+        data(data),
+        num_elements(num_elements) {}
+  std::shared_ptr<py_granny_reader> reader;
+  bg3_granny_type_info* type_info;
+  void* data;
+  size_t num_elements;
+};
+
+struct py_granny_direct_span : public py_granny_span {
+  py_granny_direct_span(std::shared_ptr<py_granny_reader> reader,
+                        bg3_granny_type_info* type_info,
+                        void* data,
+                        size_t num_elements)
+      : py_granny_span(reader, type_info, data, num_elements),
+        element_size(granny_object_size(type_info)) {}
+  size_t element_size;
+};
+
+struct py_granny_ptr_span : public py_granny_span {
+  py_granny_ptr_span(std::shared_ptr<py_granny_reader> reader,
+                     bg3_granny_type_info* type_info,
+                     void* data,
+                     size_t num_elements)
+      : py_granny_span(reader, type_info, data, num_elements) {}
+};
+
+static py::tuple convert_vec3(float vec[3]) {
+  return py::make_tuple(vec[0], vec[1], vec[2]);
+}
+static py::tuple convert_vec4(float vec[4]) {
+  return py::make_tuple(vec[0], vec[1], vec[2], vec[3]);
+}
+
+static py::object convert_scalar(std::shared_ptr<py_granny_reader>& reader,
+                                 bg3_granny_type_info* ti,
+                                 char* ptr,
+                                 size_t offset);
+
 struct py_granny_ptr {
   py_granny_ptr(std::shared_ptr<py_granny_reader> reader,
                 bg3_granny_type_info* type_info,
                 void* data)
       : reader(std::move(reader)), type_info(type_info), data(data) {}
-  py::object getattr(const std::string& name) {
-    // TODO: everything!
+  py::object getattr(std::string const& name) {
     size_t offset = 0;
+    char* ptr = (char*)data;
     for (bg3_granny_type_info* ti = type_info; ti->type != bg3_granny_dt_end; ++ti) {
       if (!strcmp(name.c_str(), ti->name)) {
-        switch (ti->type) {
-          case bg3_granny_dt_reference: {
-            void* ref = *(void**)((char*)data + offset);
-            return py::cast(
-                std::make_unique<py_granny_ptr>(reader, ti->reference_type, ref));
+        if (ti->num_elements) {
+          py::list rv;
+          size_t element_size = granny_field_size(ti) / ti->num_elements;
+          for (size_t i = 0; i < ti->num_elements; ++i) {
+            rv.append(convert_scalar(reader, ti, ptr, offset));
+            offset += element_size;
           }
-          case bg3_granny_dt_string: {
-            char* str = *(char**)((char*)data + offset);
-            return py::str(str);
-          }
-          default:
-            return py::none();
+          return rv;
+        } else {
+          return convert_scalar(reader, ti, ptr, offset);
         }
       }
       offset += granny_field_size(ti);
@@ -567,6 +620,97 @@ struct py_granny_ptr {
   bg3_granny_type_info* type_info;
   void* data;
 };
+
+static py::object convert_scalar(std::shared_ptr<py_granny_reader>& reader,
+                                 bg3_granny_type_info* ti,
+                                 char* ptr,
+                                 size_t offset) {
+  switch (ti->type) {
+    case bg3_granny_dt_inline: {
+      return py::cast(
+          std::make_unique<py_granny_ptr>(reader, ti->reference_type, ptr + offset));
+    }
+    case bg3_granny_dt_reference: {
+      void* ref;
+      memcpy(&ref, ptr + offset, sizeof(void*));
+      return py::cast(std::make_unique<py_granny_ptr>(reader, ti->reference_type, ref));
+    }
+    case bg3_granny_dt_reference_to_array: {
+      struct LIBBG3_GRANNY_PACK {
+        int32_t num_elements;
+        void* ref;
+      } pack;
+      memcpy(&pack, ptr + offset, sizeof(pack));
+      return py::cast(std::make_unique<py_granny_direct_span>(
+          reader, ti->reference_type, pack.ref, pack.num_elements));
+    }
+    case bg3_granny_dt_array_of_references: {
+      struct LIBBG3_GRANNY_PACK {
+        int32_t num_elements;
+        void* ref;
+      } pack;
+      memcpy(&pack, ptr + offset, sizeof(pack));
+      return py::cast(std::make_unique<py_granny_ptr_span>(reader, ti->reference_type,
+                                                           pack.ref, pack.num_elements));
+    }
+    case bg3_granny_dt_variant_reference: {
+      bg3_granny_variant variant;
+      memcpy(&variant, ptr + offset, sizeof(bg3_granny_variant));
+      return py::cast(std::make_unique<py_granny_ptr>(reader, variant.type, variant.obj));
+    }
+    case bg3_granny_dt_reference_to_variant_array: {
+      bg3_granny_variant_array variant_array;
+      memcpy(&variant_array, ptr + offset, sizeof(bg3_granny_variant_array));
+      return py::cast(std::make_unique<py_granny_ptr_span>(
+          reader, variant_array.type, variant_array.items, variant_array.num_items));
+    }
+    case bg3_granny_dt_string: {
+      char* str;
+      memcpy(&str, ptr + offset, sizeof(char*));
+      return py::str(str);
+    }
+    case bg3_granny_dt_transform: {
+      bg3_granny_transform transform;
+      memcpy(&transform, ptr + offset, sizeof(bg3_granny_transform));
+      return py::make_tuple(
+          transform.flags, convert_vec3(transform.position),
+          convert_vec4(transform.orientation), convert_vec3(transform.scale_shear[0]),
+          convert_vec3(transform.scale_shear[1]), convert_vec3(transform.scale_shear[2]));
+    }
+#define CONVERT_FLOAT(g_type, c_type)           \
+  case bg3_granny_dt_##g_type: {                \
+    c_type val;                                 \
+    memcpy(&val, ptr + offset, sizeof(c_type)); \
+    return py::float_(val);                     \
+  }
+#define CONVERT_INT(g_type, c_type)             \
+  case bg3_granny_dt_##g_type: {                \
+    c_type val;                                 \
+    memcpy(&val, ptr + offset, sizeof(c_type)); \
+    return py::int_(val);                       \
+  }
+      CONVERT_FLOAT(float, float);
+      CONVERT_INT(int8, int8_t);
+      CONVERT_INT(uint8, uint8_t);
+      CONVERT_INT(binormal_int8, int8_t);
+      CONVERT_INT(normal_uint8, uint8_t);
+      CONVERT_INT(int16, int16_t);
+      CONVERT_INT(uint16, uint16_t);
+      CONVERT_INT(binormal_int16, int16_t);
+      CONVERT_INT(normal_uint16, uint16_t);
+      CONVERT_INT(int32, int32_t);
+      CONVERT_INT(uint32, uint32_t);
+#undef CONVERT_FLOAT
+#undef CONVERT_INT
+    case bg3_granny_dt_half: {
+      bg3_half val;
+      memcpy(&val, ptr + offset, sizeof(uint16_t));
+      return py::float_((float)val);
+    }
+    default:
+      return py::none();
+  }
+}
 
 struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> {
   static std::shared_ptr<py_granny_reader> from_path(py::str path) {
@@ -661,4 +805,6 @@ PYBIND11_MODULE(_pybg3, m) {
   py::class_<py_granny_ptr>(m, "_GrannyPtr")
       .def("__getattr__", &py_granny_ptr::getattr, py::is_operator())
       .def("__dir__", &py_granny_ptr::dir, py::is_operator());
+  py::class_<py_granny_direct_span>(m, "_GrannyDirectSpan");
+  py::class_<py_granny_ptr_span>(m, "_GrannyPtrSpan");
 }
