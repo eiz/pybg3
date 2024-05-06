@@ -30,7 +30,7 @@ using namespace rans;
 
 TEST(RansTest, RansStateSymmetric) {
   std::array<uint16_t, 128> bitbuf;
-  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  bounded_stack<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   rans_state<uint32_t> state;
   for (int i = 0; i < 256; ++i) {
     state.push_bits(bitstream, i, 8);
@@ -45,15 +45,15 @@ TEST(RansTest, RansStateSymmetric) {
 
 TEST(RansTest, RansStateBitstreamOverflows) {
   std::array<uint16_t, 128> bitbuf;
-  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.begin(), bitbuf.end());
+  bounded_stack<uint16_t> bitstream(bitbuf.begin(), bitbuf.begin(), bitbuf.end());
   EXPECT_THROW(bitstream.push(0), std::out_of_range);
-  bitstream = rans_bitstream<uint16_t>(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  bitstream = bounded_stack<uint16_t>(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   EXPECT_THROW(bitstream.pop(), std::out_of_range);
 }
 
 TEST(RansTest, RansStateCdf) {
   std::array<uint16_t, 128> bitbuf;
-  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  bounded_stack<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   rans_state<uint32_t> state;
   frequency_table<uint16_t, 2, 15, 1> table;
   table.sums = {0, 0x6000, 0x8000};
@@ -106,7 +106,7 @@ TEST(RansTest, RansStateCdf) {
 
 TEST(RansTest, RansStateCdf64) {
   std::array<uint32_t, 128> bitbuf;
-  rans_bitstream<uint32_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  bounded_stack<uint32_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   rans_state<uint64_t> state;
   frequency_table<uint32_t, 2, 31, 6> table;
   table.sums = {0, 0x7FFF0000, 0x80000000};
@@ -135,7 +135,7 @@ TEST(RansTest, RansStateCdf64) {
 TEST(RansTest, RansPushBitsOffload) {
   rans_state<uint32_t> state;
   std::array<uint16_t, 128> bitbuf;
-  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  bounded_stack<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   int num_pushed = 0;
   while (bitstream.cur == bitstream.end) {
     state.push_bits(bitstream, 0, 1);
@@ -158,7 +158,7 @@ TEST(RansTest, RansPushCdfOffload) {
   }
   rans_state<uint32_t> state;
   std::array<uint16_t, 128> bitbuf;
-  rans_bitstream<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  bounded_stack<uint16_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   model_t model;
   for (auto value : random_values) {
     state.push_cdf(bitstream, value, model.cdf);
@@ -179,7 +179,7 @@ TEST(RansTest, RansPushCdfOffload64) {
   }
   rans_state<uint64_t> state;
   std::array<uint32_t, 128> bitbuf;
-  rans_bitstream<uint32_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
+  bounded_stack<uint32_t> bitstream(bitbuf.begin(), bitbuf.end(), bitbuf.end());
   model_t model;
   for (auto value : random_values) {
     state.push_cdf(bitstream, value, model.cdf);

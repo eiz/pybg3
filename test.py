@@ -258,7 +258,9 @@ def test_granny(path):
     try:
         data = MODELS.file_data(path)
         granny = _pybg3._GrannyReader.from_data(data)
-        _pybg3.log(f"parsed {path}")
+        root = granny.root
+        _pybg3.log(str(dir(root)))
+        # _pybg3.log(f"parsed {path}")
     except Exception as e:
         _pybg3.log(f"failed to load {path}: {repr(e)}")
 
@@ -279,11 +281,15 @@ def process_nautiloid():
             if visual_template is not None and len(visual_template) > 0:
                 visual = visuals.by_uuid.get(visual_template)
                 if visual is None:
+                    # Weird: there seem to be a bunch of scenery objects with
+                    # VisualTemplates which are from an EffectBank, not a
+                    # VisualBank.
                     _pybg3.log(f"missing visual: {visual_template}")
-                    pprint.pp(index.query(visual_template))
+                    # pprint.pp(root_template.node)
+                    # pprint.pp(index.query(visual_template))
                 else:
                     source_file = visual.node.attrs.get("SourceFile")
-                    _pybg3.log(f"visual: {visual_template} ({source_file})")
+                    # _pybg3.log(f"visual: {visual_template} ({source_file})")
                     if source_file is not None:
                         test_granny(source_file.value)
             key = obj.attrs["MapKey"]

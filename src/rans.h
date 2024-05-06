@@ -40,14 +40,12 @@
 #include <span>
 #include <stdexcept>
 
-#define BITKNIT2_MAGIC 0x75B1
+#define LIBBG3_BITKNIT2_MAGIC 0x75B1
 
-#ifndef forceinline
 #ifdef NDEBUG
-#define forceinline __attribute__((always_inline))
+#define LIBBG3_FORCEINLINE __attribute__((always_inline))
 #else
-#define forceinline
-#endif
+#define LIBBG3_FORCEINLINE
 #endif
 
 namespace rans {
@@ -89,10 +87,27 @@ struct frequency_table {
   static constexpr size_t frequency_bits = FrequencyBits;
   static constexpr size_t vocab_size = VocabSize;
   static constexpr size_t lookup_shift = FrequencyBits - LookupBits;
+  // Invariants:
+  // - sums[VocabSize] == 2^FrequencyBits
+  // - sums[i] < sums[i + 1]
+  // - you must call finish_update after changing sums to recalculate lookup.
   std::array<T, VocabSize + 1> sums;
   std::array<T, LookupBits ? 1 << LookupBits : 0> lookup;
+  // Given a code, find the symbol whose cumulative frequency range the code falls within.
+  // If code is >= 2^FrequencyBits, the behavior is undefined.
+  size_t LIBBG3_FORCEINLINE find_symbol(size_t code) const {
+    if constexpr (LookupBits == 0) {
+      return find_symbol_slow(code);
+    } else {
+      size_t sym = lookup[code >> lookup_shift];
+      while (code >= sums[sym + 1]) {
+        sym++;
+      }
+      return sym;
+    }
+  }
   // (very!) slow fallback binary search method.
-  size_t forceinline find_symbol_slow(size_t code) const {
+  size_t LIBBG3_FORCEINLINE find_symbol_slow(size_t code) const {
     size_t lo = 0, hi = VocabSize - 1;
     while (lo <= hi) {
       size_t mid = lo + ((hi - lo) / 2);
@@ -107,17 +122,6 @@ struct frequency_table {
       }
     }
     __builtin_unreachable();
-  }
-  size_t forceinline find_symbol(size_t code) const {
-    if constexpr (LookupBits == 0) {
-      return find_symbol_slow(code);
-    } else {
-      size_t sym = lookup[code >> lookup_shift];
-      while (code >= sums[sym + 1]) {
-        sym++;
-      }
-      return sym;
-    }
   }
   void finish_update() {
     if constexpr (LookupBits == 0) {
@@ -135,8 +139,10 @@ struct frequency_table {
       }
     }
   }
-  T forceinline frequency(T symbol) const { return sums[symbol + 1] - sums[symbol]; }
-  T forceinline sum_below(T symbol) const { return sums[symbol]; }
+  T LIBBG3_FORCEINLINE frequency(T symbol) const {
+    return sums[symbol + 1] - sums[symbol];
+  }
+  T LIBBG3_FORCEINLINE sum_below(T symbol) const { return sums[symbol]; }
 };
 
 // A symbol probability model that periodically updates its distribution using recently
@@ -173,7 +179,7 @@ struct deferred_adaptive_model {
     }
     cdf.finish_update();
   }
-  bool forceinline observe_symbol(T symbol) {
+  bool LIBBG3_FORCEINLINE observe_symbol(T symbol) {
     frequency_accumulator[symbol] += frequency_incr;
     adaptation_counter = (adaptation_counter + 1) % AdaptationInterval;
     if (adaptation_counter == 0) {
@@ -198,18 +204,18 @@ struct deferred_adaptive_model {
   int adaptation_counter{0};
 };
 
-// Really a stack that grows top to bottom. Initialize with (start, start, end) for
+// A stack that grows top to bottom. Initialize with (start, start, end) for
 // reading and (start, end, end) for writing.
 template <typename T>
-struct rans_bitstream {
-  rans_bitstream(T* begin, T* cur, T* end) : begin(begin), cur(cur), end(end) {}
-  void forceinline push(T word) {
+struct bounded_stack {
+  bounded_stack(T* begin, T* cur, T* end) : begin(begin), cur(cur), end(end) {}
+  void LIBBG3_FORCEINLINE push(T word) {
     if (cur == begin) {
       throw std::out_of_range("bitstream overflow");
     }
     *--cur = word;
   }
-  T forceinline pop() {
+  T LIBBG3_FORCEINLINE pop() {
     if (cur == end) {
       throw std::out_of_range("unexpected end of bitstream");
     }
@@ -222,7 +228,7 @@ struct rans_bitstream {
 // half the number of bits in Bits. Information can be added and removed from the number
 // like a stack using push and pop operations. To keep operations on the top of the
 // stack fast, digits at the top of the stack are cached and the rest are offloaded to a
-// rans_bitstream.
+// bounded_stack.
 template <typename Bits>
 struct rans_state {
   using stream_bits_t = unsigned_t<sizeof(Bits) / 2>::type;
@@ -230,14 +236,16 @@ struct rans_state {
   static constexpr Bits refill_threshold = Bits(1) << refill_shift;
   rans_state(Bits bits) : bits(bits) {}
   rans_state() : bits(refill_threshold) {}
-  void forceinline push_bits(rans_bitstream<stream_bits_t>& stream, Bits sym, int nbits) {
+  void LIBBG3_FORCEINLINE push_bits(bounded_stack<stream_bits_t>& stream,
+                                    Bits sym,
+                                    int nbits) {
     Bits mask = ~(~Bits(0) >> nbits);
     if (bits & mask) {
       offload(stream);
     }
     bits = (bits << nbits) | (sym & ((Bits(1) << nbits) - 1));
   }
-  Bits forceinline pop_bits(rans_bitstream<stream_bits_t>& stream, int nbits) {
+  Bits LIBBG3_FORCEINLINE pop_bits(bounded_stack<stream_bits_t>& stream, int nbits) {
     assert(nbits < refill_shift);
     Bits sym = bits & ((Bits(1) << nbits) - 1);
     bits >>= nbits;
@@ -245,9 +253,9 @@ struct rans_state {
     return sym;
   }
   template <typename CDF>
-  void forceinline push_cdf(rans_bitstream<stream_bits_t>& stream,
-                            Bits sym,
-                            CDF const& cdf) {
+  void LIBBG3_FORCEINLINE push_cdf(bounded_stack<stream_bits_t>& stream,
+                                   Bits sym,
+                                   CDF const& cdf) {
     Bits mask = ~(~Bits(0) >> CDF::frequency_bits);
     Bits freq = cdf.frequency(sym);
     if ((bits / freq) & mask) {
@@ -256,7 +264,7 @@ struct rans_state {
     bits = ((bits / freq) << CDF::frequency_bits) + (bits % freq) + cdf.sum_below(sym);
   }
   template <typename CDF>
-  Bits forceinline pop_cdf(rans_bitstream<stream_bits_t>& stream, CDF const& cdf) {
+  Bits LIBBG3_FORCEINLINE pop_cdf(bounded_stack<stream_bits_t>& stream, CDF const& cdf) {
     static_assert(CDF::frequency_bits < refill_shift);
     size_t code = bits & ((Bits(1) << CDF::frequency_bits) - 1);
     size_t sym = cdf.find_symbol(code);
@@ -265,12 +273,12 @@ struct rans_state {
     maybe_refill(stream);
     return sym;
   }
-  void forceinline maybe_refill(rans_bitstream<stream_bits_t>& stream) {
+  void LIBBG3_FORCEINLINE maybe_refill(bounded_stack<stream_bits_t>& stream) {
     if (bits < refill_threshold) {
       bits = (bits << refill_shift) | stream.pop();
     }
   }
-  void forceinline offload(rans_bitstream<stream_bits_t>& stream) {
+  void LIBBG3_FORCEINLINE offload(bounded_stack<stream_bits_t>& stream) {
     stream.push(bits & (refill_threshold - 1));
     bits >>= refill_shift;
   }
@@ -291,7 +299,7 @@ struct register_lru_cache {
       entries[i] = 1;
     }
   }
-  void insert(T value) {
+  void LIBBG3_FORCEINLINE insert(T value) {
     entries[entry_order >> 28] = entries[(entry_order >> 24) & 15];
     entries[(entry_order >> 24) & 15] = value;
   }
@@ -299,7 +307,7 @@ struct register_lru_cache {
     uint32_t slot = (entry_order >> (index * 4)) & 15;
     return entries[slot];
   }
-  uint32_t forceinline hit(uint32_t index) {
+  uint32_t LIBBG3_FORCEINLINE hit(uint32_t index) {
     uint32_t slot = (entry_order >> (index * 4)) & 15;
     uint32_t rotate_mask = (16 << (index * 4)) - 1;
     uint32_t rotated_order = ((entry_order << 4) | slot) & rotate_mask;
@@ -312,8 +320,8 @@ struct bitknit2_state {
   bitknit2_state(std::span<uint8_t> dst)
       : dst(dst.data()), dst_end(dst.data() + dst.size()), src(0, 0, 0) {}
   bool decode(std::span<uint16_t> data) {
-    src = rans_bitstream<uint16_t>(data.data(), data.data(), data.data() + data.size());
-    if (src.cur == src.end || *src.cur != BITKNIT2_MAGIC) {
+    src = bounded_stack<uint16_t>(data.data(), data.data(), data.data() + data.size());
+    if (src.cur == src.end || *src.cur != LIBBG3_BITKNIT2_MAGIC) {
       return false;
     }
     src.pop();
@@ -328,7 +336,7 @@ struct bitknit2_state {
   }
 
  private:
-  void forceinline decode_quantum(uint8_t*& dst_cur) {
+  void LIBBG3_FORCEINLINE decode_quantum(uint8_t*& dst_cur) {
     size_t offset = dst_cur - dst;
     size_t boundary =
         std::min(size_t(dst_end - dst), (offset & ~size_t(0xFFFF)) + 0x10000);
@@ -366,10 +374,10 @@ struct bitknit2_state {
       throw std::runtime_error("rANS stream corrupted");
     }
   }
-  void forceinline decode_copy(uint32_t command,
-                               rans_state<uint32_t>& state1,
-                               rans_state<uint32_t>& state2,
-                               uint8_t*& dst_cur) {
+  void LIBBG3_FORCEINLINE decode_copy(uint32_t command,
+                                      rans_state<uint32_t>& state1,
+                                      rans_state<uint32_t>& state2,
+                                      uint8_t*& dst_cur) {
     size_t model_index = size_t(dst_cur) % 4;
     uint32_t copy_length;
     if (command < 288) {
@@ -410,17 +418,17 @@ struct bitknit2_state {
       dst_cur++;
     }
   }
-  uint32_t forceinline pop_bits(int nbits,
-                                rans_state<uint32_t>& state1,
-                                rans_state<uint32_t>& state2) {
+  uint32_t LIBBG3_FORCEINLINE pop_bits(int nbits,
+                                       rans_state<uint32_t>& state1,
+                                       rans_state<uint32_t>& state2) {
     uint32_t result = state1.pop_bits(src, nbits);
     std::swap(state1, state2);
     return result;
   }
   template <typename Model>
-  uint32_t forceinline pop_model(Model& model,
-                                 rans_state<uint32_t>& state1,
-                                 rans_state<uint32_t>& state2) {
+  uint32_t LIBBG3_FORCEINLINE pop_model(Model& model,
+                                        rans_state<uint32_t>& state1,
+                                        rans_state<uint32_t>& state2) {
     uint32_t result = state1.pop_cdf(src, model.cdf);
     model.observe_symbol(result);
     std::swap(state1, state2);
@@ -428,8 +436,8 @@ struct bitknit2_state {
   }
   // I hope sometimes saving those 2 bytes per quantum was worth it.
   // See "tying the knot" https://fgiesen.wordpress.com/2015/12/21/rans-in-practice/
-  void forceinline decode_initial_state(rans_state<uint32_t>& state1,
-                                        rans_state<uint32_t>& state2) {
+  void LIBBG3_FORCEINLINE decode_initial_state(rans_state<uint32_t>& state1,
+                                               rans_state<uint32_t>& state2) {
     uint16_t init_0 = src.pop(), init_1 = src.pop();
     rans_state<uint32_t> merged_state((init_0 << 16) | init_1);
     // The index of the highest set bit in state2.
@@ -443,7 +451,7 @@ struct bitknit2_state {
     // Set high order bit
     state2.bits |= 1 << (16 + split_point);
   }
-  rans_bitstream<uint16_t> src;
+  bounded_stack<uint16_t> src;
   uint8_t *dst, *dst_end;
   std::array<deferred_adaptive_model<uint16_t, 1024, 300, 36, 15, 10>, 4>
       command_word_models;

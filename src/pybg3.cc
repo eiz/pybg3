@@ -25,6 +25,7 @@
 #include "pybg3_granny.h"
 #include "rans.h"
 
+#include <memory>
 #include <unordered_map>
 
 #include <pybind11/pybind11.h>
@@ -372,12 +373,46 @@ struct py_lsof_file {
   bg3_lsof_reader reader;
 };
 
-struct py_granny_reader {
-  static std::unique_ptr<py_granny_reader> from_path(py::str path) {
-    return std::make_unique<py_granny_reader>(path);
+struct py_granny_reader;
+
+struct py_granny_ptr {
+  py_granny_ptr(std::shared_ptr<py_granny_reader> reader,
+                bg3_granny_type_info* type_info,
+                void* data)
+      : reader(std::move(reader)), type_info(type_info), data(data) {}
+  py::object getattr(const std::string& name) {
+    // TODO: everything!
+    for (bg3_granny_type_info* ti = type_info; ti->type != bg3_granny_dt_end; ++ti) {
+      if (!strcmp(name.c_str(), ti->name)) {
+        switch (ti->type) {
+          case bg3_granny_dt_string: {
+            //
+          }
+          default:
+            return py::none();
+        }
+      }
+    }
+    return py::none();
   }
-  static std::unique_ptr<py_granny_reader> from_data(py::bytes data) {
-    return std::make_unique<py_granny_reader>(data);
+  std::vector<std::string> dir() {
+    std::vector<std::string> output;
+    for (bg3_granny_type_info* ti = type_info; ti->type != bg3_granny_dt_end; ++ti) {
+      output.push_back(ti->name);
+    }
+    return output;
+  }
+  std::shared_ptr<py_granny_reader> reader;
+  bg3_granny_type_info* type_info;
+  void* data;
+};
+
+struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> {
+  static std::shared_ptr<py_granny_reader> from_path(py::str path) {
+    return std::make_shared<py_granny_reader>(path);
+  }
+  static std::shared_ptr<py_granny_reader> from_data(py::bytes data) {
+    return std::make_shared<py_granny_reader>(data);
   }
   py_granny_reader(py::str py_path) {
     std::string path(py_path);
@@ -409,6 +444,11 @@ struct py_granny_reader {
       bg3_mapped_file_destroy(&mapped);
     }
     bg3_granny_reader_destroy(&reader);
+  }
+  std::unique_ptr<py_granny_ptr> root() {
+    bg3_granny_obj_root* root = bg3_granny_reader_get_root(&reader);
+    bg3_granny_type_info* root_type = bg3_granny_reader_get_root_type(&reader);
+    return std::make_unique<py_granny_ptr>(shared_from_this(), root_type, root);
   }
   bool is_mapped_file{false};
   py::bytes data;
@@ -542,7 +582,11 @@ PYBIND11_MODULE(_pybg3, m) {
   py::class_<py_index_reader>(m, "_IndexReader")
       .def(py::init<const std::string&>())
       .def("query", &py_index_reader::query);
-  py::class_<py_granny_reader>(m, "_GrannyReader")
+  py::class_<py_granny_reader, std::shared_ptr<py_granny_reader>>(m, "_GrannyReader")
       .def_static("from_path", &py_granny_reader::from_path)
-      .def_static("from_data", &py_granny_reader::from_data);
+      .def_static("from_data", &py_granny_reader::from_data)
+      .def_property_readonly("root", &py_granny_reader::root);
+  py::class_<py_granny_ptr>(m, "_GrannyPtr")
+      .def("__getattr__", &py_granny_ptr::getattr, py::is_operator())
+      .def("__dir__", &py_granny_ptr::dir, py::is_operator());
 }
