@@ -37,7 +37,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <span>
 #include <stdexcept>
 
 #define LIBBG3_BITKNIT2_MAGIC 0x75B1
@@ -317,10 +316,10 @@ struct register_lru_cache {
 };
 
 struct bitknit2_state {
-  bitknit2_state(std::span<uint8_t> dst)
-      : dst(dst.data()), dst_end(dst.data() + dst.size()), src(0, 0, 0) {}
-  bool decode(std::span<uint16_t> data) {
-    src = bounded_stack<uint16_t>(data.data(), data.data(), data.data() + data.size());
+  bitknit2_state(uint8_t* dst, size_t dst_len)
+      : dst(dst), dst_end(dst + dst_len), src(0, 0, 0) {}
+  bool decode(uint16_t* data, size_t data_len_bytes) {
+    src = bounded_stack<uint16_t>(data, data, data + data_len_bytes / 2);
     if (src.cur == src.end || *src.cur != LIBBG3_BITKNIT2_MAGIC) {
       return false;
     }

@@ -20,16 +20,17 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#define LIBBG3_IMPLEMENTATION
-#include "libbg3.h"
-#include "pybg3_granny.h"
-#include "rans.h"
-
 #include <memory>
 #include <unordered_map>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+
+#define LIBBG3_IMPLEMENTATION
+#include "libbg3.h"
+
+#include "pybg3_granny.h"
+#include "rans.h"
 
 namespace py = pybind11;
 
@@ -373,89 +374,6 @@ struct py_lsof_file {
   bg3_lsof_reader reader;
 };
 
-struct py_granny_reader;
-
-struct py_granny_ptr {
-  py_granny_ptr(std::shared_ptr<py_granny_reader> reader,
-                bg3_granny_type_info* type_info,
-                void* data)
-      : reader(std::move(reader)), type_info(type_info), data(data) {}
-  py::object getattr(const std::string& name) {
-    // TODO: everything!
-    for (bg3_granny_type_info* ti = type_info; ti->type != bg3_granny_dt_end; ++ti) {
-      if (!strcmp(name.c_str(), ti->name)) {
-        switch (ti->type) {
-          case bg3_granny_dt_string: {
-            //
-          }
-          default:
-            return py::none();
-        }
-      }
-    }
-    return py::none();
-  }
-  std::vector<std::string> dir() {
-    std::vector<std::string> output;
-    for (bg3_granny_type_info* ti = type_info; ti->type != bg3_granny_dt_end; ++ti) {
-      output.push_back(ti->name);
-    }
-    return output;
-  }
-  std::shared_ptr<py_granny_reader> reader;
-  bg3_granny_type_info* type_info;
-  void* data;
-};
-
-struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> {
-  static std::shared_ptr<py_granny_reader> from_path(py::str path) {
-    return std::make_shared<py_granny_reader>(path);
-  }
-  static std::shared_ptr<py_granny_reader> from_data(py::bytes data) {
-    return std::make_shared<py_granny_reader>(data);
-  }
-  py_granny_reader(py::str py_path) {
-    std::string path(py_path);
-    bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
-    if (status) {
-      throw std::runtime_error("Failed to open gr2 file");
-    }
-    status =
-        bg3_granny_reader_init(&reader, mapped.data, mapped.data_len, &pybg3_granny_ops);
-    if (status) {
-      bg3_mapped_file_destroy(&mapped);
-      throw std::runtime_error("Failed to parse gr2 file");
-    }
-    is_mapped_file = true;
-  }
-  py_granny_reader(py::bytes data) : data(data) {
-    std::string_view view(data);
-    // TODO: reader isn't const correct. This one is actually quite bad because the granny
-    // reader will actually modify data to apply its pointer fixups. We need to make it
-    // always copy on write.
-    bg3_status status = bg3_granny_reader_init(&reader, const_cast<char*>(view.data()),
-                                               view.size(), &pybg3_granny_ops);
-    if (status) {
-      throw std::runtime_error("Failed to parse gr2 file");
-    }
-  }
-  ~py_granny_reader() {
-    if (is_mapped_file) {
-      bg3_mapped_file_destroy(&mapped);
-    }
-    bg3_granny_reader_destroy(&reader);
-  }
-  std::unique_ptr<py_granny_ptr> root() {
-    bg3_granny_obj_root* root = bg3_granny_reader_get_root(&reader);
-    bg3_granny_type_info* root_type = bg3_granny_reader_get_root_type(&reader);
-    return std::make_unique<py_granny_ptr>(shared_from_this(), root_type, root);
-  }
-  bool is_mapped_file{false};
-  py::bytes data;
-  bg3_mapped_file mapped;
-  bg3_granny_reader reader;
-};
-
 struct py_loca_file {
   static std::unique_ptr<py_loca_file> from_path(py::str path) {
     return std::make_unique<py_loca_file>(path);
@@ -543,6 +461,160 @@ struct py_index_reader {
   std::unordered_map<std::string, py::object> intern;
   bg3_mapped_file mapped;
   bg3_index_reader reader;
+};
+
+struct py_granny_reader;
+
+static size_t granny_data_type_size(bg3_granny_data_type dt) {
+  switch (dt) {
+    case bg3_granny_dt_inline:
+      return 0;
+    case bg3_granny_dt_reference:
+      return sizeof(void*);
+    case bg3_granny_dt_reference_to_array:
+      return sizeof(void*) + sizeof(int32_t);
+    case bg3_granny_dt_array_of_references:
+      return sizeof(void*) + sizeof(int32_t);
+    case bg3_granny_dt_variant_reference:
+      return sizeof(bg3_granny_variant);
+    case bg3_granny_dt_reference_to_variant_array:
+      return sizeof(bg3_granny_variant_array);
+    case bg3_granny_dt_string:
+      return sizeof(char*);
+    case bg3_granny_dt_transform:
+      return sizeof(bg3_granny_transform);
+    case bg3_granny_dt_float:
+      return sizeof(float);
+    case bg3_granny_dt_int8:
+      return sizeof(int8_t);
+    case bg3_granny_dt_uint8:
+      return sizeof(uint8_t);
+    case bg3_granny_dt_binormal_int8:
+      return sizeof(int8_t);
+    case bg3_granny_dt_normal_uint8:
+      return sizeof(uint8_t);
+    case bg3_granny_dt_int16:
+      return sizeof(int16_t);
+    case bg3_granny_dt_uint16:
+      return sizeof(uint16_t);
+    case bg3_granny_dt_binormal_int16:
+      return sizeof(int16_t);
+    case bg3_granny_dt_normal_uint16:
+      return sizeof(uint16_t);
+    case bg3_granny_dt_int32:
+      return sizeof(int32_t);
+    case bg3_granny_dt_uint32:
+      return sizeof(uint32_t);
+    case bg3_granny_dt_half:
+      return sizeof(uint16_t);
+    // case bg3_granny_dt_empty_reference:
+    // return sizeof(void*);
+    default:
+      bg3_panic("invalid granny data type");
+  }
+}
+
+static size_t granny_field_size(bg3_granny_type_info* ti) {
+  size_t field_size = granny_data_type_size(ti->type);
+  if (ti->type == bg3_granny_dt_inline) {
+    for (bg3_granny_type_info* rti = ti->reference_type; rti->type != bg3_granny_dt_end;
+         ++rti) {
+      field_size += granny_field_size(rti);
+    }
+  }
+  if (ti->num_elements) {
+    field_size *= ti->num_elements;
+  }
+  return field_size;
+}
+
+struct py_granny_ptr {
+  py_granny_ptr(std::shared_ptr<py_granny_reader> reader,
+                bg3_granny_type_info* type_info,
+                void* data)
+      : reader(std::move(reader)), type_info(type_info), data(data) {}
+  py::object getattr(const std::string& name) {
+    // TODO: everything!
+    size_t offset = 0;
+    for (bg3_granny_type_info* ti = type_info; ti->type != bg3_granny_dt_end; ++ti) {
+      if (!strcmp(name.c_str(), ti->name)) {
+        switch (ti->type) {
+          case bg3_granny_dt_reference: {
+            void* ref = *(void**)((char*)data + offset);
+            return py::cast(
+                std::make_unique<py_granny_ptr>(reader, ti->reference_type, ref));
+          }
+          case bg3_granny_dt_string: {
+            char* str = *(char**)((char*)data + offset);
+            return py::str(str);
+          }
+          default:
+            return py::none();
+        }
+      }
+      offset += granny_field_size(ti);
+    }
+    return py::none();
+  }
+  std::vector<std::string> dir() {
+    std::vector<std::string> output;
+    for (bg3_granny_type_info* ti = type_info; ti->type != bg3_granny_dt_end; ++ti) {
+      output.push_back(ti->name);
+    }
+    return output;
+  }
+  std::shared_ptr<py_granny_reader> reader;
+  bg3_granny_type_info* type_info;
+  void* data;
+};
+
+struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> {
+  static std::shared_ptr<py_granny_reader> from_path(py::str path) {
+    return std::make_shared<py_granny_reader>(path);
+  }
+  static std::shared_ptr<py_granny_reader> from_data(py::bytes data) {
+    return std::make_shared<py_granny_reader>(data);
+  }
+  py_granny_reader(py::str py_path) {
+    std::string path(py_path);
+    bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
+    if (status) {
+      throw std::runtime_error("Failed to open gr2 file");
+    }
+    status =
+        bg3_granny_reader_init(&reader, mapped.data, mapped.data_len, &pybg3_granny_ops);
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse gr2 file");
+    }
+    is_mapped_file = true;
+  }
+  py_granny_reader(py::bytes data) : data(data) {
+    std::string_view view(data);
+    // TODO: reader isn't const correct. This one is actually quite bad because the granny
+    // reader will actually modify data to apply its pointer fixups. We need to make it
+    // always copy on write.
+    bg3_status status = bg3_granny_reader_init(&reader, const_cast<char*>(view.data()),
+                                               view.size(), &pybg3_granny_ops);
+    if (status) {
+      throw std::runtime_error("Failed to parse gr2 file");
+    }
+  }
+  ~py_granny_reader() {
+    if (is_mapped_file) {
+      bg3_mapped_file_destroy(&mapped);
+    }
+    bg3_granny_reader_destroy(&reader);
+  }
+  std::unique_ptr<py_granny_ptr> root() {
+    bg3_granny_obj_root* root = bg3_granny_reader_get_root(&reader);
+    bg3_granny_type_info* root_type = bg3_granny_reader_get_root_type(&reader);
+    return std::make_unique<py_granny_ptr>(shared_from_this(), root_type, root);
+  }
+  bool is_mapped_file{false};
+  py::bytes data;
+  bg3_mapped_file mapped;
+  bg3_granny_reader reader;
 };
 
 void pybg3_log(std::string const& message) {

@@ -14,7 +14,7 @@ void* pybg3_granny_begin_file_decompression(int type,
   if (type != bg3_granny_compression_bitknit2 || endian_swapped) {
     return nullptr;
   }
-  return new rans::bitknit2_state({(uint8_t*)uncompressed_data, uncompressed_size});
+  return new rans::bitknit2_state((uint8_t*)uncompressed_data, uncompressed_size);
 }
 
 bool pybg3_granny_decompress_incremental(void* context,
@@ -22,7 +22,7 @@ bool pybg3_granny_decompress_incremental(void* context,
                                          void* compressed_data) {
   rans::bitknit2_state* ctx = (rans::bitknit2_state*)context;
   try {
-    bool result = ctx->decode({(uint16_t*)compressed_data, compressed_size / 2});
+    bool result = ctx->decode((uint16_t*)compressed_data, compressed_size);
     return result;
   } catch (std::exception& e) {
     bg3_error("Decompression error: %s\n", e.what());

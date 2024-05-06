@@ -259,7 +259,7 @@ def test_granny(path):
         data = MODELS.file_data(path)
         granny = _pybg3._GrannyReader.from_data(data)
         root = granny.root
-        _pybg3.log(str(dir(root)))
+        _pybg3.log(f"{root.ArtToolInfo.FromArtToolName}: {root.FromFileName}")
         # _pybg3.log(f"parsed {path}")
     except Exception as e:
         _pybg3.log(f"failed to load {path}: {repr(e)}")
