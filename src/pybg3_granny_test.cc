@@ -44,7 +44,7 @@ TEST(PyBg3GrannyTest, PyBg3GrannyTestFile) {
   }
   struct timespec start, end;
   double shortest = 1000000.0;
-  for (int i = 0; i < 10; ++i) {
+  for (int i = 0; i < 100; ++i) {
     clock_gettime(CLOCK_MONOTONIC, &start);
     bg3_granny_reader reader;
     if (bg3_granny_reader_init(&reader, mapped.data, mapped.data_len, &compress_ops)) {
