@@ -356,10 +356,10 @@ struct bitknit2_state {
       uint32_t command = pop_model(command_word_models[model_index], state1, state2);
       if (command >= 256) {
         decode_copy(command, state1, state2, cur_tmp);
-        continue;
+      } else {
+        *cur_tmp = command + *(cur_tmp - delta_offset);
+        cur_tmp++;
       }
-      *cur_tmp = command + *(cur_tmp - delta_offset);
-      cur_tmp++;
     }
     dst_cur = cur_tmp;
     if (state1.bits != 0x10000 || state2.bits != 0x10000) {

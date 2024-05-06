@@ -1,4 +1,3 @@
-#include <sys/_types/_timeval.h>
 #include <ctime>
 #define LIBBG3_IMPLEMENTATION
 #include "pybg3_granny.h"
