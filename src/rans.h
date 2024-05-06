@@ -22,9 +22,6 @@
 
 #pragma once
 
-// This is my attempt at simple and readable, not fast. Some features of an optimized
-// implementation of this algorithm are intentionally not incorporated here.
-//
 // References:
 // https://github.com/eiz/libbg3/blob/main/docs/bitknit2.txt
 // Jarek Duda, "Asymmetric numeral systems: entropy coding combining speed of Huffman
@@ -74,14 +71,27 @@ struct unsigned_t<8> {
   using type = uint64_t;
 };
 
+// Represents a probability distribution as an array of quantized frequencies.
+// The frequencies are stored as a prefix sum, where sums[i] contains the sum of
+// the frequencies of symbols < i. sums[VocabSize] always equals 2^FrequencyBits
+// and no symbol may have a frequency of 0.
+//
+// Additionally, reverse lookups from a FrequencyBits-bit code to a symbol are
+// supported and may be accelerated by a lookup table. The lookup table is
+// indexed by the high bits of the code value, and contains the symbol index at
+// which to start a linear search. If the lookup table isn't used (LookupBits ==
+// 0), reverse lookup is done by binary search.
 template <typename T, size_t VocabSize, size_t FrequencyBits, size_t LookupBits>
 struct frequency_table {
+  static_assert(FrequencyBits > 0 && FrequencyBits < sizeof(T) * 8);
+  static_assert(LookupBits <= FrequencyBits);
+  static_assert(VocabSize > 0 && VocabSize < (1 << FrequencyBits));
   static constexpr size_t frequency_bits = FrequencyBits;
   static constexpr size_t vocab_size = VocabSize;
   static constexpr size_t lookup_shift = FrequencyBits - LookupBits;
   std::array<T, VocabSize + 1> sums;
-  std::array<T, 1 << LookupBits> lookup;
-  // Intentionally (very!) slow binary search method.
+  std::array<T, LookupBits ? 1 << LookupBits : 0> lookup;
+  // (very!) slow fallback binary search method.
   size_t forceinline find_symbol_slow(size_t code) const {
     size_t lo = 0, hi = VocabSize - 1;
     while (lo <= hi) {
@@ -127,6 +137,12 @@ struct frequency_table {
   T forceinline sum_below(T symbol) const { return sums[symbol]; }
 };
 
+// A symbol probability model that periodically updates its distribution using recently
+// seen symbols. The distribution is initialized with (VocabSize - NumMinProbableSymbols)
+// symbols of (approximately) equal probability, followed by NumMinProbableSymbols symbols
+// with the minimum probability. The distribution is stored in a frequency_table with the
+// given parameters. Every AdaptationInterval symbols seen by observe_symbol will trigger
+// an update to the distribution.
 template <typename T,
           int AdaptationInterval,
           size_t VocabSize,
@@ -180,6 +196,8 @@ struct deferred_adaptive_model {
   int adaptation_counter{0};
 };
 
+// Really a stack that grows top to bottom. Initialize with (start, start, end) for
+// reading and (start, end, end) for writing.
 template <typename T>
 struct rans_bitstream {
   rans_bitstream(T* begin, T* cur, T* end) : begin(begin), cur(cur), end(end) {}
@@ -198,6 +216,11 @@ struct rans_bitstream {
   T *begin, *cur, *end;
 };
 
+// Abstractly, an arbitrary precision natural number which is always >= 2^N, where N is
+// half the number of bits in Bits. Information can be added and removed from the number
+// like a stack using push and pop operations. To keep operations on the top of the
+// stack fast, digits at the top of the stack are cached and the rest are offloaded to a
+// rans_bitstream.
 template <typename Bits>
 struct rans_state {
   using stream_bits_t = unsigned_t<sizeof(Bits) / 2>::type;
@@ -284,33 +307,31 @@ struct register_lru_cache {
 };
 
 struct bitknit2_state {
-  bitknit2_state(std::span<uint8_t> dst, std::span<uint16_t> src)
-      : dst(dst.data()),
-        dst_cur(dst.data()),
-        dst_end(dst.data() + dst.size()),
-        src(src.data(), src.data(), src.data() + src.size()) {}
-  bool decode() {
+  bitknit2_state(std::span<uint8_t> dst)
+      : dst(dst.data()), dst_end(dst.data() + dst.size()), src(0, 0, 0) {}
+  bool decode(std::span<uint16_t> data) {
+    src = rans_bitstream<uint16_t>(data.data(), data.data(), data.data() + data.size());
     if (src.cur == src.end || *src.cur != BITKNIT2_MAGIC) {
       return false;
     }
     src.pop();
+    uint8_t* dst_cur = dst;
     while (dst_cur < dst_end) {
       if (src.cur == src.end) {
         return false;
       }
-      decode_quantum();
+      decode_quantum(dst_cur);
     }
     return true;
   }
-  void decode_quantum() {
-    // This sucks, but these need to be passed around as locals because otherwise the
-    // compiler will generate actual memory stores each time state1 and state2 are
-    // swapped, which very much defeats the purpose.
-    rans_state<uint32_t> state1, state2;
+
+ private:
+  void forceinline decode_quantum(uint8_t*& dst_cur) {
     size_t offset = dst_cur - dst;
     size_t boundary =
         std::min(size_t(dst_end - dst), (offset & ~size_t(0xFFFF)) + 0x10000);
     uint8_t* quantum_end = dst + boundary;
+    // A NUL word at the beginning of the quantum == copy raw data.
     if (!*src.cur) {
       src.cur++;
       size_t copy_len =
@@ -320,28 +341,33 @@ struct bitknit2_state {
       src.cur += copy_len / 2;
       return;
     }
-    initialize_rans_state(state1, state2);
+    // This sucks, but clang generates much better code if these are all in locals instead
+    // of struct members.
+    rans_state<uint32_t> state1, state2;
+    decode_initial_state(state1, state2);
     if (dst_cur == dst) {
       *dst_cur++ = pop_bits(8, state1, state2);
     }
-#pragma clang loop unroll_count(2)
-    while (dst_cur < quantum_end) {
-      size_t model_index = size_t(dst_cur) % 4;
+    uint8_t* cur_tmp = dst_cur;  // clang does slightly better this way
+    while (cur_tmp < quantum_end) {
+      size_t model_index = size_t(cur_tmp) % 4;
       uint32_t command = pop_model(command_word_models[model_index], state1, state2);
       if (command >= 256) {
-        decode_copy(command, state1, state2);
+        decode_copy(command, state1, state2, cur_tmp);
         continue;
       }
-      *dst_cur = command + *(dst_cur - delta_offset);
-      dst_cur++;
+      *cur_tmp = command + *(cur_tmp - delta_offset);
+      cur_tmp++;
     }
+    dst_cur = cur_tmp;
     if (state1.bits != 0x10000 || state2.bits != 0x10000) {
       throw std::runtime_error("rANS stream corrupted");
     }
   }
-  void decode_copy(uint32_t command,
-                   rans_state<uint32_t>& state1,
-                   rans_state<uint32_t>& state2) {
+  void forceinline decode_copy(uint32_t command,
+                               rans_state<uint32_t>& state1,
+                               rans_state<uint32_t>& state2,
+                               uint8_t*& dst_cur) {
     size_t model_index = size_t(dst_cur) % 4;
     uint32_t copy_length;
     if (command < 288) {
@@ -400,7 +426,8 @@ struct bitknit2_state {
   }
   // I hope sometimes saving those 2 bytes per quantum was worth it.
   // See "tying the knot" https://fgiesen.wordpress.com/2015/12/21/rans-in-practice/
-  void initialize_rans_state(rans_state<uint32_t>& state1, rans_state<uint32_t>& state2) {
+  void forceinline decode_initial_state(rans_state<uint32_t>& state1,
+                                        rans_state<uint32_t>& state2) {
     uint16_t init_0 = src.pop(), init_1 = src.pop();
     rans_state<uint32_t> merged_state((init_0 << 16) | init_1);
     // The index of the highest set bit in state2.
@@ -414,10 +441,8 @@ struct bitknit2_state {
     // Set high order bit
     state2.bits |= 1 << (16 + split_point);
   }
-  uint8_t *dst, *dst_cur, *dst_end;
   rans_bitstream<uint16_t> src;
-
- private:
+  uint8_t *dst, *dst_end;
   std::array<deferred_adaptive_model<uint16_t, 1024, 300, 36, 15, 10>, 4>
       command_word_models;
   std::array<deferred_adaptive_model<uint16_t, 1024, 40, 0, 15, 10>, 4>

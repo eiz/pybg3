@@ -1,3 +1,5 @@
+#include <sys/_types/_timeval.h>
+#include <ctime>
 #define LIBBG3_IMPLEMENTATION
 #include "pybg3_granny.h"
 
@@ -40,11 +42,23 @@ TEST(PyBg3GrannyTest, PyBg3GrannyTestFile) {
   if (bg3_mapped_file_init_ro(&mapped, full_path.c_str())) {
     throw std::runtime_error("Failed to open file");
   }
+  struct timespec start, end;
+  double shortest = 1000000.0;
   for (int i = 0; i < 10; ++i) {
+    clock_gettime(CLOCK_MONOTONIC, &start);
     bg3_granny_reader reader;
     if (bg3_granny_reader_init(&reader, mapped.data, mapped.data_len, &compress_ops)) {
       throw std::runtime_error("Failed to initialize granny reader");
     }
     bg3_granny_reader_destroy(&reader);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double start_ns = start.tv_sec * 1e9 + start.tv_nsec;
+    double end_ns = end.tv_sec * 1e9 + end.tv_nsec;
+    double elapsed = (end_ns - start_ns) / 1e9;
+    if (elapsed < shortest) {
+      shortest = elapsed;
+    }
   }
+  bg3_mapped_file_destroy(&mapped);
+  printf("Shortest time: %f\n", shortest);
 }
