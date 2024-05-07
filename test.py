@@ -259,19 +259,20 @@ def test_granny(path):
         data = MODELS.file_data(path)
         granny = _pybg3._GrannyReader.from_data(data)
         root = granny.root
-        _pybg3.log(f"{root.ArtToolInfo.FromArtToolName}: {root.FromFileName}")
+        print(f"{root.ArtToolInfo.FromArtToolName}: {root.FromFileName}")
         # _pybg3.log(f"parsed {path}")
     except Exception as e:
         _pybg3.log(f"failed to load {path}: {repr(e)}")
 
 
 def process_nautiloid():
-    TUT_Avernus_C = LEVELS["TUT_Avernus_C"]
-    os.makedirs("out/Levels/TUT_Avernus_C", exist_ok=True)
-    stage = Usd.Stage.CreateNew("out/Levels/TUT_Avernus_C/_merged.usda")
+    level_name = "Cre_GithCreche_D"
+    level = LEVELS[level_name]
+    os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
+    stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
     total_xforms = 0
     visuals = ASSETS.get_or_create("Visual")
-    for source in TUT_Avernus_C.sources:
+    for source in level.sources:
         templates, _ = lsf.Node.parse_node(source.lsf, 0)
         for obj in templates.children:
             visual_template = obj.attrs.get("VisualTemplate")
@@ -296,7 +297,7 @@ def process_nautiloid():
             transform = obj.component("Transform")
             if transform is not None:
                 total_xforms += 1
-                xform_key = f"/Levels/TUT_Avernus_C/{source.type}/{to_pxr_uuid(key)}"
+                xform_key = f"/Levels/{level_name}/{source.type}/{to_pxr_uuid(key)}"
                 xform = UsdGeom.Xform.Define(stage, xform_key)
                 sphere = UsdGeom.Sphere.Define(stage, f"{xform_key}/placeholder")
                 translate = xform.AddTranslateOp()

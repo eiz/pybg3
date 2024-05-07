@@ -646,7 +646,7 @@ struct py_granny_direct_span : public py_granny_span<py_granny_direct_span> {
       throw std::runtime_error("Unsupported data type");
     }
     return py::buffer_info(data, element_size, std::move(format), 1, {num_elements},
-                           {element_size});
+                           {element_size}, true);
   }
   py::object get_item(size_t index);
   size_t element_size;
