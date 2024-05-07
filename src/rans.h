@@ -126,14 +126,13 @@ struct frequency_table {
     if constexpr (LookupBits == 0) {
       return;
     }
-    size_t code = 0, sym = 0, cur = 0, next = sums[1];
+    size_t code = 0, sym = 0, next = sums[1];
     while (code < (T(1) << FrequencyBits)) {
       if (code < next) {
         lookup[code >> lookup_shift] = sym;
         code += T(1) << lookup_shift;
       } else {
         sym++;
-        cur = next;
         next = sums[sym + 1];
       }
     }
