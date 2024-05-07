@@ -24,6 +24,7 @@
 #include <unordered_map>
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #define LIBBG3_IMPLEMENTATION
 #include "libbg3.h"
@@ -513,6 +514,68 @@ static size_t granny_data_type_size(bg3_granny_data_type dt) {
   }
 }
 
+static bool granny_python_struct_push_dt(std::string& format, bg3_granny_data_type dt) {
+  switch (dt) {
+    case bg3_granny_dt_float:
+      format += 'f';
+      break;
+    case bg3_granny_dt_int8:
+      format += 'b';
+      break;
+    case bg3_granny_dt_uint8:
+      format += 'B';
+      break;
+    case bg3_granny_dt_binormal_int8:
+      format += 'b';
+      break;
+    case bg3_granny_dt_normal_uint8:
+      format += 'B';
+      break;
+    case bg3_granny_dt_int16:
+      format += 'h';
+      break;
+    case bg3_granny_dt_uint16:
+      format += 'H';
+      break;
+    case bg3_granny_dt_binormal_int16:
+      format += 'h';
+      break;
+    case bg3_granny_dt_normal_uint16:
+      format += 'H';
+      break;
+    case bg3_granny_dt_int32:
+      format += 'i';
+      break;
+    case bg3_granny_dt_uint32:
+      format += 'I';
+      break;
+    case bg3_granny_dt_half:
+      format += 'e';
+      break;
+    default:
+      return false;
+  }
+  return true;
+}
+
+static bool granny_python_struct_push_object(std::string& format,
+                                             bg3_granny_type_info* ti) {
+  for (bg3_granny_type_info* rti = ti; rti->type != bg3_granny_dt_end; ++rti) {
+    for (int i = 0; i < LIBBG3_MAX(1, rti->num_elements); ++i) {
+      if (rti->type == bg3_granny_dt_inline) {
+        if (!granny_python_struct_push_object(format, rti->reference_type)) {
+          return false;
+        }
+      } else {
+        if (!granny_python_struct_push_dt(format, rti->type)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 static size_t granny_field_size(bg3_granny_type_info* ti);
 
 static size_t granny_object_size(bg3_granny_type_info* ti) {
@@ -577,6 +640,14 @@ struct py_granny_direct_span : public py_granny_span<py_granny_direct_span> {
                         size_t num_elements)
       : py_granny_span(reader, type_info, data, num_elements),
         element_size(granny_object_size(type_info)) {}
+  py::buffer_info as_buffer() {
+    std::string format;
+    if (!granny_python_struct_push_object(format, type_info)) {
+      throw std::runtime_error("Unsupported data type");
+    }
+    return py::buffer_info(data, element_size, std::move(format), 1, {num_elements},
+                           {element_size});
+  }
   py::object get_item(size_t index);
   size_t element_size;
 };
@@ -859,7 +930,9 @@ PYBIND11_MODULE(_pybg3, m) {
       .def("__getattr__", &py_granny_ptr::getattr, py::is_operator())
       .def("__dir__", &py_granny_ptr::dir, py::is_operator());
   py::class_<py_granny_direct_span>(
-      m, "_GrannyDirectSpan", py::custom_type_setup(&py_granny_direct_span::type_setup))
+      m, "_GrannyDirectSpan", py::custom_type_setup(&py_granny_direct_span::type_setup),
+      py::buffer_protocol())
+      .def_buffer(&py_granny_direct_span::as_buffer)
       .def("__getitem__", &py_granny_direct_span::get_item)
       .def("__len__", &py_granny_direct_span::len);
   py::class_<py_granny_ptr_span>(m, "_GrannyPtrSpan",
