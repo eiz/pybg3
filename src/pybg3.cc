@@ -24,7 +24,6 @@
 #include <unordered_map>
 
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
 
 #define LIBBG3_IMPLEMENTATION
 #include "libbg3.h"
@@ -538,6 +537,15 @@ static size_t granny_field_size(bg3_granny_type_info* ti) {
   return field_size;
 }
 
+template <typename T>
+struct py_granny_span_iter {
+  py_granny_span_iter(T span) : span(span), index(0) {}
+  T span;
+  size_t index;
+  static void type_setup(PyHeapTypeObject* ht);
+};
+
+template <typename T>
 struct py_granny_span {
   py_granny_span(std::shared_ptr<py_granny_reader> reader,
                  bg3_granny_type_info* type_info,
@@ -547,28 +555,39 @@ struct py_granny_span {
         type_info(type_info),
         data(data),
         num_elements(num_elements) {}
+  static void type_setup(PyHeapTypeObject* ht) {
+    PyTypeObject* type = &ht->ht_type;
+    type->tp_iter = [](PyObject* self) -> PyObject* {
+      py::object ival =
+          py::cast(std::make_unique<py_granny_span_iter<T>>(*py::cast<T*>(self)));
+      return ival.release().ptr();
+    };
+  }
+  size_t len() { return num_elements; }
   std::shared_ptr<py_granny_reader> reader;
   bg3_granny_type_info* type_info;
   void* data;
   size_t num_elements;
 };
 
-struct py_granny_direct_span : public py_granny_span {
+struct py_granny_direct_span : public py_granny_span<py_granny_direct_span> {
   py_granny_direct_span(std::shared_ptr<py_granny_reader> reader,
                         bg3_granny_type_info* type_info,
                         void* data,
                         size_t num_elements)
       : py_granny_span(reader, type_info, data, num_elements),
         element_size(granny_object_size(type_info)) {}
+  py::object get_item(size_t index);
   size_t element_size;
 };
 
-struct py_granny_ptr_span : public py_granny_span {
+struct py_granny_ptr_span : public py_granny_span<py_granny_ptr_span> {
   py_granny_ptr_span(std::shared_ptr<py_granny_reader> reader,
                      bg3_granny_type_info* type_info,
                      void* data,
                      size_t num_elements)
       : py_granny_span(reader, type_info, data, num_elements) {}
+  py::object get_item(size_t index);
 };
 
 static py::tuple convert_vec3(float vec[3]) {
@@ -661,7 +680,7 @@ static py::object convert_scalar(std::shared_ptr<py_granny_reader>& reader,
     case bg3_granny_dt_reference_to_variant_array: {
       bg3_granny_variant_array variant_array;
       memcpy(&variant_array, ptr + offset, sizeof(bg3_granny_variant_array));
-      return py::cast(std::make_unique<py_granny_ptr_span>(
+      return py::cast(std::make_unique<py_granny_direct_span>(
           reader, variant_array.type, variant_array.items, variant_array.num_items));
     }
     case bg3_granny_dt_string: {
@@ -710,6 +729,40 @@ static py::object convert_scalar(std::shared_ptr<py_granny_reader>& reader,
     default:
       return py::none();
   }
+}
+
+template <typename T>
+void py_granny_span_iter<T>::type_setup(PyHeapTypeObject* ht) {
+  PyTypeObject* type = &ht->ht_type;
+  type->tp_iter = [](PyObject* self) -> PyObject* {
+    Py_INCREF(self);
+    return self;
+  };
+  type->tp_iternext = [](PyObject* py_self) -> PyObject* {
+    py_granny_span_iter* self = py::cast<py_granny_span_iter*>(py_self);
+    if (self->index >= self->span.num_elements) {
+      return 0;
+    }
+    py::object rv = self->span.get_item(self->index);
+    ++self->index;
+    return rv.release().ptr();
+  };
+}
+
+py::object py_granny_direct_span::get_item(size_t index) {
+  if (index >= num_elements) {
+    throw py::index_error();
+  }
+  return py::cast(std::make_unique<py_granny_ptr>(reader, type_info,
+                                                  (char*)data + index * element_size));
+}
+
+py::object py_granny_ptr_span::get_item(size_t index) {
+  if (index >= num_elements) {
+    throw py::index_error();
+  }
+  return py::cast(
+      std::make_unique<py_granny_ptr>(reader, type_info, ((void**)data)[index]));
 }
 
 struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> {
@@ -805,6 +858,18 @@ PYBIND11_MODULE(_pybg3, m) {
   py::class_<py_granny_ptr>(m, "_GrannyPtr")
       .def("__getattr__", &py_granny_ptr::getattr, py::is_operator())
       .def("__dir__", &py_granny_ptr::dir, py::is_operator());
-  py::class_<py_granny_direct_span>(m, "_GrannyDirectSpan");
-  py::class_<py_granny_ptr_span>(m, "_GrannyPtrSpan");
+  py::class_<py_granny_direct_span>(
+      m, "_GrannyDirectSpan", py::custom_type_setup(&py_granny_direct_span::type_setup))
+      .def("__getitem__", &py_granny_direct_span::get_item)
+      .def("__len__", &py_granny_direct_span::len);
+  py::class_<py_granny_ptr_span>(m, "_GrannyPtrSpan",
+                                 py::custom_type_setup(&py_granny_ptr_span::type_setup))
+      .def("__getitem__", &py_granny_ptr_span::get_item)
+      .def("__len__", &py_granny_ptr_span::len);
+  py::class_<py_granny_span_iter<py_granny_direct_span>>(
+      m, "_GrannyDirectSpanIter",
+      py::custom_type_setup(&py_granny_span_iter<py_granny_direct_span>::type_setup));
+  py::class_<py_granny_span_iter<py_granny_ptr_span>>(
+      m, "_GrannyPtrSpanIter",
+      py::custom_type_setup(&py_granny_span_iter<py_granny_ptr_span>::type_setup));
 }
