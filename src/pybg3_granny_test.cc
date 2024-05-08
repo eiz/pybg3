@@ -27,6 +27,7 @@
 #include <string>
 
 #include "libbg3.h"
+#include "rans.h"
 
 #include <gtest/gtest.h>
 
@@ -81,4 +82,49 @@ TEST(PyBg3GrannyTest, PyBg3GrannyTestFile) {
   }
   bg3_mapped_file_destroy(&mapped);
   printf("Shortest time: %f\n", shortest);
+}
+
+// Is this the rANS encoder that does the least possible amount of compression?
+// The compression ratio is given by the binary entropy function:
+// https://en.wikipedia.org/wiki/Binary_entropy_function
+TEST(PyBg3GrannyTest, Zen) {
+  rans::rans_state<uint64_t> state;
+  rans::frequency_table<uint32_t, 2, 31, 1> cdf;
+  bg3_mapped_file mapped;
+  char const* path = "/tmp/thefile";
+  if (bg3_mapped_file_init_ro(&mapped, path)) {
+    throw std::runtime_error("Failed to open file");
+  }
+  uint64_t num_one_bits = 0;
+  uint8_t* data = (uint8_t*)mapped.data;
+  for (size_t i = 0; i < mapped.data_len; ++i) {
+    num_one_bits += __builtin_popcount(data[i]);
+  }
+  uint64_t num_zero_bits = mapped.data_len * 8ULL - num_one_bits;
+  uint32_t zero_freq = num_zero_bits * 0x7FFFFFFFULL / (num_zero_bits + num_one_bits);
+  cdf.sums = {0ULL, zero_freq, 0x80000000ULL};
+  cdf.finish_update();
+  size_t bitbuf_len = mapped.data_len / 4 + 3;
+  uint32_t* bitbuf = new uint32_t[bitbuf_len];
+  rans::bounded_stack<uint32_t> bitstream(bitbuf, bitbuf + bitbuf_len,
+                                          bitbuf + bitbuf_len);
+  for (size_t i = 0; i < mapped.data_len; ++i) {
+    for (int j = 0; j < 8; ++j) {
+      state.push_cdf(bitstream, (data[i] >> j) & 1, cdf);
+    }
+  }
+  bitstream.push(state.bits & 0xFFFFFFFFU);
+  bitstream.push(state.bits >> 32);
+  FILE* fp = fopen("/tmp/thefile.rans", "wb");
+  fwrite(bitstream.cur, 4, bitstream.end - bitstream.cur, fp);
+  fclose(fp);
+  state.bits = 0;
+  state.bits |= (uint64_t)bitstream.pop() << 32;
+  state.bits |= bitstream.pop();
+  for (size_t i = mapped.data_len - 1; i; --i) {
+    for (int j = 7; j >= 0; --j) {
+      EXPECT_EQ((data[i] >> j) & 1, state.pop_cdf(bitstream, cdf));
+    }
+  }
+  delete[] bitbuf;
 }
