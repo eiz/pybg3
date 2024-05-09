@@ -2,10 +2,12 @@ import os
 import pprint
 import re
 import time
+import numpy as np
+from numpy.lib import recfunctions as rfn
 from dataclasses import dataclass
 from pathlib import Path
 from pybg3 import pak, lsf, _pybg3
-from pxr import Usd, UsdGeom
+from pxr import Usd, UsdGeom, Vt
 
 
 @dataclass
@@ -265,6 +267,65 @@ def test_granny(path):
         _pybg3.log(f"failed to load {path}: {repr(e)}")
 
 
+class MeshConverter:
+    def __init__(self):
+        self._converted = {}
+
+    def convert(self, path, name):
+        if path not in self._converted:
+            self._converted[path] = {}
+        path_meshes = self._converted[path]
+        if name in path_meshes:
+            print("already converted")
+            return
+        path_meshes[name] = True
+        try:
+            granny = _pybg3._GrannyReader.from_data(MODELS.file_data(path))
+            for mesh in granny.root.Meshes:
+                if mesh.Name == name:
+                    self._do_convert(path, name, mesh)
+                    return
+            raise ValueError(f"mesh not found: {name}")
+        except Exception as e:
+            print(f"failed to convert {path}: {repr(e)}")
+
+    def _do_convert(self, path, name, mesh):
+        print("do thing")
+        g_vertices = np.array(mesh.PrimaryVertexData.Vertices, copy=False)
+        if len(mesh.PrimaryTopology.Indices16) > 0:
+            g_indices = np.array(mesh.PrimaryTopology.Indices16, copy=False)
+        else:
+            g_indices = np.array(mesh.PrimaryTopology.Indices, copy=False)
+        os.makedirs(f"out/Meshes/{path}", exist_ok=True)
+        u_stage = Usd.Stage.CreateNew(f"out/Meshes/{path}/{name}.usdc")
+        u_mesh = UsdGeom.Mesh.Define(u_stage, "/mesh")
+        u_points = u_mesh.CreatePointsAttr()
+        g_positions = rfn.structured_to_unstructured(
+            g_vertices[["f0", "f1", "f2"]], copy=False
+        )
+        vt_vertices = Vt.Vec3fArray.FromNumpy(g_positions)
+        vt_indices = Vt.IntArray.FromNumpy(g_indices)
+        vt_face_counts = Vt.IntArray.FromNumpy(
+            np.full(g_positions.shape[0], 3, dtype=np.int32)
+        )
+        u_points.Set(vt_vertices)
+        u_vertex_face_counts = u_mesh.CreateFaceVertexCountsAttr()
+        u_vertex_face_counts.Set(vt_face_counts)
+        u_vertex_indices = u_mesh.CreateFaceVertexIndicesAttr()
+        u_vertex_indices.Set(vt_indices)
+        u_stage.GetRootLayer().Save()
+
+
+def convert_visual_lod0(mesh_converter, visual):
+    source_file = visual.node.attrs["SourceFile"]
+    for node in visual.node.children:
+        if node.name == "Objects" and node.attrs["LOD"].value == 0:
+            object_id = node.attrs["ObjectID"].split(".")[1]
+            print(f"converting {source_file.value} {object_id}")
+            mesh_converter.convert(source_file.value, object_id)
+    pass
+
+
 def process_nautiloid():
     level_name = "Cre_GithCreche_D"
     level = LEVELS[level_name]
@@ -272,6 +333,7 @@ def process_nautiloid():
     stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
     total_xforms = 0
     visuals = ASSETS.get_or_create("Visual")
+    mesh_converter = MeshConverter()
     for source in level.sources:
         templates, _ = lsf.Node.parse_node(source.lsf, 0)
         for obj in templates.children:
@@ -289,10 +351,8 @@ def process_nautiloid():
                     # pprint.pp(root_template.node)
                     # pprint.pp(index.query(visual_template))
                 else:
-                    source_file = visual.node.attrs.get("SourceFile")
-                    # _pybg3.log(f"visual: {visual_template} ({source_file})")
-                    if source_file is not None:
-                        test_granny(source_file.value)
+                    if "SourceFile" in visual.node.attrs:
+                        convert_visual_lod0(mesh_converter, visual)
             key = obj.attrs["MapKey"]
             transform = obj.component("Transform")
             if transform is not None:

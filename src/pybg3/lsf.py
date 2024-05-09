@@ -10,6 +10,11 @@ class LSString:
 
 
 @dataclass
+class U8:
+    value: int
+
+
+@dataclass
 class I32:
     value: int
 
@@ -137,6 +142,8 @@ class Node:
                 match a_type:
                     case DataType.BOOL:
                         val = a_value
+                    case DataType.UINT8:
+                        val = U8(a_value)
                     case DataType.INT32:
                         val = I32(a_value)
                     case DataType.LSSTRING:
