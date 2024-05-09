@@ -108,23 +108,26 @@ TEST(PyBg3GrannyTest, Zen) {
   uint32_t* bitbuf = new uint32_t[bitbuf_len];
   rans::bounded_stack<uint32_t> bitstream(bitbuf, bitbuf + bitbuf_len,
                                           bitbuf + bitbuf_len);
-  for (size_t i = 0; i < mapped.data_len; ++i) {
+  for (size_t i = mapped.data_len; i; --i) {
     for (int j = 0; j < 8; ++j) {
-      state.push_cdf(bitstream, (data[i] >> j) & 1, cdf);
+      state.push_cdf(bitstream, (data[i - 1] >> j) & 1, cdf);
     }
   }
   bitstream.push(state.bits & 0xFFFFFFFFU);
   bitstream.push(state.bits >> 32);
+  bitstream.push(cdf.sums[1]);
   FILE* fp = fopen("/tmp/thefile.rans", "wb");
   fwrite(bitstream.cur, 4, bitstream.end - bitstream.cur, fp);
   fclose(fp);
+  cdf.sums[1] = bitstream.pop();
   state.bits = 0;
   state.bits |= (uint64_t)bitstream.pop() << 32;
   state.bits |= bitstream.pop();
-  for (size_t i = mapped.data_len - 1; i; --i) {
+  for (size_t i = 0; i < mapped.data_len; ++i) {
     for (int j = 7; j >= 0; --j) {
       EXPECT_EQ((data[i] >> j) & 1, state.pop_cdf(bitstream, cdf));
     }
   }
   delete[] bitbuf;
+  bg3_mapped_file_destroy(&mapped);
 }
