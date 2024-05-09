@@ -276,28 +276,28 @@ class MeshConverter:
             self._converted[path] = {}
         path_meshes = self._converted[path]
         if name in path_meshes:
-            print("already converted")
-            return
-        path_meshes[name] = True
+            return path_meshes[name]
+        path_meshes[name] = None  # only try to convert once.
         try:
             granny = _pybg3._GrannyReader.from_data(MODELS.file_data(path))
             for mesh in granny.root.Meshes:
                 if mesh.Name == name:
-                    self._do_convert(path, name, mesh)
+                    path_meshes[name] = self._do_convert(path, name, mesh)
                     return
             raise ValueError(f"mesh not found: {name}")
         except Exception as e:
             print(f"failed to convert {path}: {repr(e)}")
+            return None
 
     def _do_convert(self, path, name, mesh):
-        print("do thing")
         g_vertices = np.array(mesh.PrimaryVertexData.Vertices, copy=False)
         if len(mesh.PrimaryTopology.Indices16) > 0:
             g_indices = np.array(mesh.PrimaryTopology.Indices16, copy=False)
         else:
             g_indices = np.array(mesh.PrimaryTopology.Indices, copy=False)
+        stage_path = f"out/Meshes/{path}/{name}.usdc"
         os.makedirs(f"out/Meshes/{path}", exist_ok=True)
-        u_stage = Usd.Stage.CreateNew(f"out/Meshes/{path}/{name}.usdc")
+        u_stage = Usd.Stage.CreateNew(stage_path)
         u_mesh = UsdGeom.Mesh.Define(u_stage, "/mesh")
         u_points = u_mesh.CreatePointsAttr()
         g_positions = rfn.structured_to_unstructured(
@@ -313,7 +313,9 @@ class MeshConverter:
         u_vertex_face_counts.Set(vt_face_counts)
         u_vertex_indices = u_mesh.CreateFaceVertexIndicesAttr()
         u_vertex_indices.Set(vt_indices)
+        u_stage.SetDefaultPrim(u_mesh.GetPrim())
         u_stage.GetRootLayer().Save()
+        return stage_path
 
 
 def convert_visual_lod0(mesh_converter, visual):
@@ -322,23 +324,24 @@ def convert_visual_lod0(mesh_converter, visual):
         if node.name == "Objects" and node.attrs["LOD"].value == 0:
             object_id = node.attrs["ObjectID"].split(".")[1]
             print(f"converting {source_file.value} {object_id}")
-            mesh_converter.convert(source_file.value, object_id)
-    pass
+            return mesh_converter.convert(source_file.value, object_id)
 
 
 def process_nautiloid():
-    level_name = "Cre_GithCreche_D"
+    level_name = "TUT_Avernus_C"
     level = LEVELS[level_name]
     os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
     stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
     total_xforms = 0
     visuals = ASSETS.get_or_create("Visual")
     mesh_converter = MeshConverter()
+    used_names = set()
     for source in level.sources:
         templates, _ = lsf.Node.parse_node(source.lsf, 0)
         for obj in templates.children:
             visual_template = obj.attrs.get("VisualTemplate")
             root_template = ROOT_TEMPLATES.by_uuid.get(obj.attrs["TemplateName"])
+            mesh_usd_path = None
             if visual_template is None:
                 visual_template = root_template.inherited_attribute("VisualTemplate")
             if visual_template is not None and len(visual_template) > 0:
@@ -352,15 +355,35 @@ def process_nautiloid():
                     # pprint.pp(index.query(visual_template))
                 else:
                     if "SourceFile" in visual.node.attrs:
-                        convert_visual_lod0(mesh_converter, visual)
+                        mesh_usd_path = convert_visual_lod0(mesh_converter, visual)
             key = obj.attrs["MapKey"]
+            name = (
+                obj.attrs["Name"]
+                .value.strip()
+                .replace("-", "_")
+                .replace(" ", "_")
+                .replace("[", "")
+                .replace("]", "")
+                .replace("(", "")
+                .replace(")", "")
+                .replace(".", "")
+                .replace("'", "")
+                .replace(",", "_")
+                .replace("?", "")
+            )
+            if name in used_names:
+                name = name + "_" + to_pxr_uuid(key)
+            used_names.add(name)
             transform = obj.component("Transform")
             if transform is not None:
                 total_xforms += 1
-                xform_key = f"/Levels/{level_name}/{source.type}/{to_pxr_uuid(key)}"
-                xform = UsdGeom.Xform.Define(stage, xform_key)
-                sphere = UsdGeom.Sphere.Define(stage, f"{xform_key}/placeholder")
-                translate = xform.AddTranslateOp()
+                obj_key = f"/Levels/{level_name}/{source.type}/{name}"
+                if mesh_usd_path is not None:
+                    obj = UsdGeom.Mesh.Define(stage, f"{obj_key}/mesh")
+                    obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
+                else:
+                    obj = UsdGeom.Sphere.Define(stage, f"{obj_key}/missing")
+                translate = obj.AddTranslateOp()
                 a_translate = transform.attrs["Position"]
                 translate.Set((a_translate.x, a_translate.y, a_translate.z))
     stage.GetRootLayer().Save()
