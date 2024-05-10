@@ -287,7 +287,7 @@ class MeshConverter:
             for mesh in granny.root.Meshes:
                 if mesh.Name == name:
                     path_meshes[name] = self._do_convert(path, name, mesh)
-                    return
+                    return path_meshes[name]
             raise ValueError(f"mesh not found: {name}")
         except Exception as e:
             print(f"failed to convert {path}: {repr(e)}")
@@ -327,12 +327,12 @@ def convert_visual_lod0(mesh_converter, visual):
     for node in visual.node.children:
         if node.name == "Objects" and node.attrs["LOD"].value == 0:
             object_id = node.attrs["ObjectID"].split(".")[1]
-            print(f"converting {source_file.value} {object_id}")
             return mesh_converter.convert(source_file.value, object_id)
+    print(f"no LOD0 for {source_file.value}")
 
 
 def process_nautiloid():
-    level_name = "WLD_Plains_D"
+    level_name = "WLD_Crashsite_D"
     level = LEVELS[level_name]
     os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
     stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
@@ -345,23 +345,7 @@ def process_nautiloid():
         for obj in templates.children:
             visual_template = obj.attrs.get("VisualTemplate")
             root_template = ROOT_TEMPLATES.by_uuid.get(obj.attrs["TemplateName"])
-            mesh_usd_path = None
-            if visual_template is None:
-                visual_template = root_template.inherited_attribute("VisualTemplate")
-            if visual_template is not None and len(visual_template) > 0:
-                visual = visuals.by_uuid.get(visual_template)
-                if visual is None:
-                    # Weird: there seem to be a bunch of scenery objects with
-                    # VisualTemplates which are from an EffectBank, not a
-                    # VisualBank.
-                    _pybg3.log(f"missing visual: {visual_template}")
-                    # pprint.pp(root_template.node)
-                    # pprint.pp(index.query(visual_template))
-                else:
-                    if "SourceFile" in visual.node.attrs:
-                        mesh_usd_path = convert_visual_lod0(mesh_converter, visual)
             key = obj.attrs["MapKey"]
-            objtype = obj.attrs["Type"]
             name = (
                 obj.attrs["Name"]
                 .value.strip()
@@ -381,15 +365,32 @@ def process_nautiloid():
             if name in used_names:
                 name = name + "_" + to_pxr_uuid(key)
             used_names.add(name)
+            mesh_usd_path = None
+            visual = None
+            if visual_template is None:
+                visual_template = root_template.inherited_attribute("VisualTemplate")
+            if visual_template is not None and len(visual_template) > 0:
+                visual = visuals.by_uuid.get(visual_template)
+                if visual is None:
+                    # Weird: there seem to be a bunch of scenery objects with
+                    # VisualTemplates which are from an EffectBank, not a
+                    # VisualBank.
+                    _pybg3.log(f"missing visual: {name}")
+                    # pprint.pp(root_template.node)
+                    # pprint.pp(index.query(visual_template))
+                else:
+                    if "SourceFile" in visual.node.attrs:
+                        mesh_usd_path = convert_visual_lod0(mesh_converter, visual)
+            objtype = obj.attrs["Type"]
             transform = obj.component("Transform")
             if transform is not None:
                 total_xforms += 1
                 obj_key = f"/Levels/{level_name}/{source.type}/{name}"
                 if mesh_usd_path is not None:
-                    obj = UsdGeom.Mesh.Define(stage, f"{obj_key}/{objtype}")
+                    obj = UsdGeom.Mesh.Define(stage, f"{obj_key}/mesh")
                     obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
                 else:
-                    obj = UsdGeom.Sphere.Define(stage, f"{obj_key}/{objtype}")
+                    obj = UsdGeom.Sphere.Define(stage, f"{obj_key}/missing")
                     # obj.CreateRadiusAttr().Set(0.001)
                 translate = obj.AddTranslateOp()
                 a_translate = transform.attrs["Position"]
@@ -397,6 +398,10 @@ def process_nautiloid():
                 orient = obj.AddOrientOp()
                 a_orient = transform.attrs["RotationQuat"]
                 orient.Set(Gf.Quatf(a_orient.w, a_orient.x, a_orient.y, a_orient.z))
+                if mesh_usd_path is not None:
+                    scale = obj.AddScaleOp()
+                    a_scale = transform.attrs["Scale"]
+                    scale.Set(Gf.Vec3f(a_scale.value, a_scale.value, a_scale.value))
     level_prim = UsdGeom.Xform.Define(stage, f"/Levels/{level_name}")
     level_prim.AddScaleOp().Set(Gf.Vec3f(1.0, 1.0, -1.0))
     stage.GetRootLayer().Save()

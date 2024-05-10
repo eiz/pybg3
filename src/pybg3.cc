@@ -888,7 +888,7 @@ struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> 
   bg3_granny_reader reader;
 };
 
-struct py_patch_file {
+struct py_patch_file : public std::enable_shared_from_this<py_patch_file> {
   static std::shared_ptr<py_patch_file> from_path(py::str path) {
     return std::make_shared<py_patch_file>(path);
   }
@@ -989,7 +989,7 @@ PYBIND11_MODULE(_pybg3, m) {
   py::class_<py_granny_span_iter<py_granny_ptr_span>>(
       m, "_GrannyPtrSpanIter",
       py::custom_type_setup(&py_granny_span_iter<py_granny_ptr_span>::type_setup));
-  py::class_<py_patch_file>(m, "_PatchFile")
+  py::class_<py_patch_file, std::shared_ptr<py_patch_file>>(m, "_PatchFile")
       .def_static("from_path", &py_patch_file::from_path)
       .def_static("from_data", &py_patch_file::from_data);
 }
