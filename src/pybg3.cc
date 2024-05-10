@@ -21,6 +21,7 @@
 // SOFTWARE.
 
 #include <memory>
+#include <stdexcept>
 #include <unordered_map>
 
 #include <pybind11/pybind11.h>
@@ -517,40 +518,58 @@ static size_t granny_data_type_size(bg3_granny_data_type dt) {
 static bool granny_python_struct_push_dt(std::string& format, bg3_granny_data_type dt) {
   switch (dt) {
     case bg3_granny_dt_float:
-      format += 'f';
+      format += "<f";
       break;
     case bg3_granny_dt_int8:
-      format += 'b';
+      format += "<b";
       break;
     case bg3_granny_dt_uint8:
-      format += 'B';
+      format += "<B";
       break;
     case bg3_granny_dt_binormal_int8:
-      format += 'b';
+      format += "<b";
       break;
     case bg3_granny_dt_normal_uint8:
-      format += 'B';
+      format += "<B";
       break;
     case bg3_granny_dt_int16:
-      format += 'h';
+      format += "<h";
       break;
     case bg3_granny_dt_uint16:
-      format += 'H';
+      format += "<H";
       break;
     case bg3_granny_dt_binormal_int16:
-      format += 'h';
+      format += "<h";
       break;
     case bg3_granny_dt_normal_uint16:
-      format += 'H';
+      format += "<H";
       break;
     case bg3_granny_dt_int32:
-      format += 'i';
+      format += "<i";
       break;
     case bg3_granny_dt_uint32:
-      format += 'I';
+      format += "<I";
       break;
     case bg3_granny_dt_half:
-      format += 'e';
+      format += "<e";
+      break;
+    case bg3_granny_dt_string:
+      format += "<Q";
+      break;
+    case bg3_granny_dt_variant_reference:
+      format += "<Q<Q";
+      break;
+    case bg3_granny_dt_reference:
+      format += "<Q";
+      break;
+    case bg3_granny_dt_reference_to_array:
+      format += "<I<Q";
+      break;
+    case bg3_granny_dt_reference_to_variant_array:
+      format += "<Q<i<Q";
+      break;
+    case bg3_granny_dt_transform:
+      format += "<i<16f";
       break;
     default:
       return false;
@@ -749,6 +768,9 @@ static py::object convert_scalar(std::shared_ptr<py_granny_reader>& reader,
     case bg3_granny_dt_variant_reference: {
       bg3_granny_variant variant;
       memcpy(&variant, ptr + offset, sizeof(bg3_granny_variant));
+      if (!variant.obj) {
+        return py::none();
+      }
       return py::cast(std::make_unique<py_granny_ptr>(reader, variant.type, variant.obj));
     }
     case bg3_granny_dt_reference_to_variant_array: {

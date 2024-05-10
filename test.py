@@ -255,16 +255,19 @@ def to_pxr_uuid(uuid):
     return f"U{uuid.replace('-', '_')}"
 
 
-def test_granny(path):
-    # ya, we def need a vfs here lol. tew dew
-    try:
-        data = MODELS.file_data(path)
-        granny = _pybg3._GrannyReader.from_data(data)
-        root = granny.root
-        print(f"{root.ArtToolInfo.FromArtToolName}: {root.FromFileName}")
-        # _pybg3.log(f"parsed {path}")
-    except Exception as e:
-        _pybg3.log(f"failed to load {path}: {repr(e)}")
+def dump_granny(root, indent=0):
+    if isinstance(root, _pybg3._GrannyPtr):
+        for name in dir(root):
+            child = root.__getattr__(name)
+            if isinstance(child, _pybg3._GrannyDirectSpan):
+                print(f"{indent * ' '}{name}: {np.array(child, copy=False)}")
+            else:
+                print(f"{indent * ' '}{name}: {child}")
+                dump_granny(child, indent + 4)
+    elif isinstance(root, _pybg3._GrannyPtrSpan):
+        for index, child in enumerate(root):
+            print(f"{indent * ' '}[{index}]:")
+            dump_granny(child, indent + 4)
 
 
 class MeshConverter:
@@ -284,6 +287,9 @@ class MeshConverter:
                 print(
                     f"mesh: {mesh.Name} vertices: {len(mesh.PrimaryVertexData.Vertices)}"
                 )
+            if "NAT_Coastal_Cliff_Sandstone_Spire_B.GR2" in path:
+                print("DUMP GRANNY")
+                dump_granny(granny.root)
             for mesh in granny.root.Meshes:
                 if mesh.Name == name:
                     path_meshes[name] = self._do_convert(path, name, mesh)
@@ -334,7 +340,7 @@ def convert_visual_lod0(mesh_converter, visual):
 
 
 def process_nautiloid():
-    level_name = "Cre_GithCreche_D"
+    level_name = "WLD_Crashsite_D"
     level = LEVELS[level_name]
     os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
     stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
@@ -374,10 +380,11 @@ def process_nautiloid():
             if visual_template is not None and len(visual_template) > 0:
                 visual = visuals.by_uuid.get(visual_template)
                 if visual is None:
+                    pass
                     # Weird: there seem to be a bunch of scenery objects with
                     # VisualTemplates which are from an EffectBank, not a
                     # VisualBank.
-                    _pybg3.log(f"missing visual: {name}")
+                    # _pybg3.log(f"missing visual: {name}")
                     # pprint.pp(root_template.node)
                     # pprint.pp(index.query(visual_template))
                 else:
