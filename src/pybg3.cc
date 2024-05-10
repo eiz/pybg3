@@ -888,6 +888,23 @@ struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> 
   bg3_granny_reader reader;
 };
 
+struct py_patch_file;
+
+struct py_patch_layer {
+  py_patch_layer(std::shared_ptr<py_patch_file> file, bg3_patch_layer* layer)
+      : file(file), layer(layer) {}
+  py::str name() { return py::str(layer->name); }
+  py::buffer_info as_buffer();
+  std::shared_ptr<py_patch_file> file;
+  bg3_patch_layer* layer;
+};
+
+struct py_patch_heightfield {
+  py_patch_heightfield(std::shared_ptr<py_patch_file> file) : file(file) {}
+  py::buffer_info as_buffer();
+  std::shared_ptr<py_patch_file> file;
+};
+
 struct py_patch_file : public std::enable_shared_from_this<py_patch_file> {
   static std::shared_ptr<py_patch_file> from_path(py::str path) {
     return std::make_shared<py_patch_file>(path);
@@ -923,11 +940,45 @@ struct py_patch_file : public std::enable_shared_from_this<py_patch_file> {
     }
     bg3_patch_file_destroy(&reader);
   }
+  std::vector<std::unique_ptr<py_patch_layer>> layers() {
+    std::vector<std::unique_ptr<py_patch_layer>> output;
+    for (size_t i = 0; i < reader.metadata.num_layers; ++i) {
+      output.emplace_back(
+          std::make_unique<py_patch_layer>(shared_from_this(), reader.layers + i));
+    }
+    return output;
+  }
+  std::unique_ptr<py_patch_heightfield> heightfield() {
+    return std::make_unique<py_patch_heightfield>(shared_from_this());
+  }
+  uint32_t tex_rows() { return reader.metadata.tex_rows; }
+  uint32_t tex_cols() { return reader.metadata.tex_cols; }
+  uint32_t local_rows() { return reader.metadata.local_rows; }
+  uint32_t local_cols() { return reader.metadata.local_cols; }
+  uint32_t chunk_x() { return reader.metadata.chunk_x; }
+  uint32_t chunk_y() { return reader.metadata.chunk_y; }
+  uint32_t global_rows() { return reader.metadata.global_rows; }
+  uint32_t global_cols() { return reader.metadata.global_cols; }
   bool is_mapped_file{false};
   py::bytes data;
   bg3_mapped_file mapped;
   bg3_patch_file reader;
 };
+
+py::buffer_info py_patch_layer::as_buffer() {
+  return py::buffer_info(
+      layer->weights, sizeof(uint8_t), py::format_descriptor<uint8_t>::format(), 2,
+      {ssize_t(file->reader.metadata.tex_rows), ssize_t(file->reader.metadata.tex_cols)},
+      {ssize_t(file->reader.metadata.tex_cols), ssize_t(1)});
+}
+
+py::buffer_info py_patch_heightfield::as_buffer() {
+  return py::buffer_info(file->reader.heightfield, sizeof(float),
+                         py::format_descriptor<float>::format(), 2,
+                         {ssize_t(file->reader.metadata.local_rows),
+                          ssize_t(file->reader.metadata.local_cols)},
+                         {ssize_t(file->reader.metadata.local_cols), ssize_t(1)});
+}
 
 void pybg3_log(std::string const& message) {
   setvbuf(stdout, NULL, _IONBF, 0);
@@ -991,5 +1042,20 @@ PYBIND11_MODULE(_pybg3, m) {
       py::custom_type_setup(&py_granny_span_iter<py_granny_ptr_span>::type_setup));
   py::class_<py_patch_file, std::shared_ptr<py_patch_file>>(m, "_PatchFile")
       .def_static("from_path", &py_patch_file::from_path)
-      .def_static("from_data", &py_patch_file::from_data);
+      .def_static("from_data", &py_patch_file::from_data)
+      .def_property_readonly("layers", &py_patch_file::layers)
+      .def_property_readonly("heightfield", &py_patch_file::heightfield)
+      .def_property_readonly("tex_rows", &py_patch_file::tex_rows)
+      .def_property_readonly("tex_cols", &py_patch_file::tex_cols)
+      .def_property_readonly("local_rows", &py_patch_file::local_rows)
+      .def_property_readonly("local_cols", &py_patch_file::local_cols)
+      .def_property_readonly("chunk_x", &py_patch_file::chunk_x)
+      .def_property_readonly("chunk_y", &py_patch_file::chunk_y)
+      .def_property_readonly("global_rows", &py_patch_file::global_rows)
+      .def_property_readonly("global_cols", &py_patch_file::global_cols);
+  py::class_<py_patch_layer>(m, "_PatchLayer")
+      .def_property_readonly("name", &py_patch_layer::name)
+      .def("as_buffer", &py_patch_layer::as_buffer);
+  py::class_<py_patch_heightfield>(m, "_PatchHeightfield")
+      .def("as_buffer", &py_patch_heightfield::as_buffer);
 }

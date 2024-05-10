@@ -332,7 +332,7 @@ def convert_visual_lod0(mesh_converter, visual):
 
 
 def process_nautiloid():
-    level_name = "WLD_Crashsite_D"
+    level_name = "WLD_Plains_D"
     level = LEVELS[level_name]
     os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
     stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
@@ -381,7 +381,6 @@ def process_nautiloid():
                 else:
                     if "SourceFile" in visual.node.attrs:
                         mesh_usd_path = convert_visual_lod0(mesh_converter, visual)
-            objtype = obj.attrs["Type"]
             transform = obj.component("Transform")
             if transform is not None:
                 total_xforms += 1
