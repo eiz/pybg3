@@ -7,7 +7,7 @@ from numpy.lib import recfunctions as rfn
 from dataclasses import dataclass
 from pathlib import Path
 from pybg3 import pak, lsf, _pybg3
-from pxr import Usd, UsdGeom, Vt
+from pxr import Usd, UsdGeom, Vt, Gf
 
 
 @dataclass
@@ -281,6 +281,10 @@ class MeshConverter:
         try:
             granny = _pybg3._GrannyReader.from_data(MODELS.file_data(path))
             for mesh in granny.root.Meshes:
+                print(
+                    f"mesh: {mesh.Name} vertices: {len(mesh.PrimaryVertexData.Vertices)}"
+                )
+            for mesh in granny.root.Meshes:
                 if mesh.Name == name:
                     path_meshes[name] = self._do_convert(path, name, mesh)
                     return
@@ -328,7 +332,7 @@ def convert_visual_lod0(mesh_converter, visual):
 
 
 def process_nautiloid():
-    level_name = "TUT_Avernus_C"
+    level_name = "WLD_Plains_D"
     level = LEVELS[level_name]
     os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
     stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
@@ -357,6 +361,7 @@ def process_nautiloid():
                     if "SourceFile" in visual.node.attrs:
                         mesh_usd_path = convert_visual_lod0(mesh_converter, visual)
             key = obj.attrs["MapKey"]
+            objtype = obj.attrs["Type"]
             name = (
                 obj.attrs["Name"]
                 .value.strip()
@@ -370,7 +375,9 @@ def process_nautiloid():
                 .replace("'", "")
                 .replace(",", "_")
                 .replace("?", "")
+                .replace("\\", "_")
             )
+            name = "_" + name
             if name in used_names:
                 name = name + "_" + to_pxr_uuid(key)
             used_names.add(name)
@@ -379,13 +386,19 @@ def process_nautiloid():
                 total_xforms += 1
                 obj_key = f"/Levels/{level_name}/{source.type}/{name}"
                 if mesh_usd_path is not None:
-                    obj = UsdGeom.Mesh.Define(stage, f"{obj_key}/mesh")
+                    obj = UsdGeom.Mesh.Define(stage, f"{obj_key}/{objtype}")
                     obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
                 else:
-                    obj = UsdGeom.Sphere.Define(stage, f"{obj_key}/missing")
+                    obj = UsdGeom.Sphere.Define(stage, f"{obj_key}/{objtype}")
+                    # obj.CreateRadiusAttr().Set(0.001)
                 translate = obj.AddTranslateOp()
                 a_translate = transform.attrs["Position"]
                 translate.Set((a_translate.x, a_translate.y, a_translate.z))
+                orient = obj.AddOrientOp()
+                a_orient = transform.attrs["RotationQuat"]
+                orient.Set(Gf.Quatf(a_orient.w, a_orient.x, a_orient.y, a_orient.z))
+    level_prim = UsdGeom.Xform.Define(stage, f"/Levels/{level_name}")
+    level_prim.AddScaleOp().Set(Gf.Vec3f(1.0, 1.0, -1.0))
     stage.GetRootLayer().Save()
     print(f"Total xforms: {total_xforms}")
 

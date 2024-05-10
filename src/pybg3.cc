@@ -723,6 +723,9 @@ static py::object convert_scalar(std::shared_ptr<py_granny_reader>& reader,
     case bg3_granny_dt_reference: {
       void* ref;
       memcpy(&ref, ptr + offset, sizeof(void*));
+      if (!ref) {
+        return py::none();
+      }
       return py::cast(std::make_unique<py_granny_ptr>(reader, ti->reference_type, ref));
     }
     case bg3_granny_dt_reference_to_array: {
@@ -885,6 +888,47 @@ struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> 
   bg3_granny_reader reader;
 };
 
+struct py_patch_file {
+  static std::shared_ptr<py_patch_file> from_path(py::str path) {
+    return std::make_shared<py_patch_file>(path);
+  }
+  static std::shared_ptr<py_patch_file> from_data(py::bytes data) {
+    return std::make_shared<py_patch_file>(data);
+  }
+  py_patch_file(py::str py_path) {
+    std::string path(py_path);
+    bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
+    if (status) {
+      throw std::runtime_error("Failed to open patch file");
+    }
+    status = bg3_patch_file_init(&reader, mapped.data, mapped.data_len);
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse patch file");
+    }
+    is_mapped_file = true;
+  }
+  py_patch_file(py::bytes data) : data(data) {
+    std::string_view view(data);
+    // TODO: isn't const correct.
+    bg3_status status =
+        bg3_patch_file_init(&reader, const_cast<char*>(view.data()), view.size());
+    if (status) {
+      throw std::runtime_error("Failed to parse patch file");
+    }
+  }
+  ~py_patch_file() {
+    if (is_mapped_file) {
+      bg3_mapped_file_destroy(&mapped);
+    }
+    bg3_patch_file_destroy(&reader);
+  }
+  bool is_mapped_file{false};
+  py::bytes data;
+  bg3_mapped_file mapped;
+  bg3_patch_file reader;
+};
+
 void pybg3_log(std::string const& message) {
   setvbuf(stdout, NULL, _IONBF, 0);
   printf("%s\n", message.c_str());
@@ -945,4 +989,7 @@ PYBIND11_MODULE(_pybg3, m) {
   py::class_<py_granny_span_iter<py_granny_ptr_span>>(
       m, "_GrannyPtrSpanIter",
       py::custom_type_setup(&py_granny_span_iter<py_granny_ptr_span>::type_setup));
+  py::class_<py_patch_file>(m, "_PatchFile")
+      .def_static("from_path", &py_patch_file::from_path)
+      .def_static("from_data", &py_patch_file::from_data);
 }
