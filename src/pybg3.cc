@@ -872,10 +872,10 @@ struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> 
     }
   }
   ~py_granny_reader() {
+    bg3_granny_reader_destroy(&reader);
     if (is_mapped_file) {
       bg3_mapped_file_destroy(&mapped);
     }
-    bg3_granny_reader_destroy(&reader);
   }
   std::unique_ptr<py_granny_ptr> root() {
     bg3_granny_obj_root* root = bg3_granny_reader_get_root(&reader);

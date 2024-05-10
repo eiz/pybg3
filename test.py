@@ -296,7 +296,9 @@ class MeshConverter:
     def _do_convert(self, path, name, mesh):
         g_vertices = np.array(mesh.PrimaryVertexData.Vertices, copy=False)
         if len(mesh.PrimaryTopology.Indices16) > 0:
-            g_indices = np.array(mesh.PrimaryTopology.Indices16, copy=False)
+            g_indices = np.array(
+                mesh.PrimaryTopology.Indices16, copy=False, dtype=np.uint16
+            )
         else:
             g_indices = np.array(mesh.PrimaryTopology.Indices, copy=False)
         stage_path = f"out/Meshes/{path}/{name}.usdc"
@@ -332,7 +334,7 @@ def convert_visual_lod0(mesh_converter, visual):
 
 
 def process_nautiloid():
-    level_name = "WLD_Plains_D"
+    level_name = "Cre_GithCreche_D"
     level = LEVELS[level_name]
     os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
     stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
