@@ -995,11 +995,11 @@ py::buffer_info py_patch_layer::as_buffer() {
 }
 
 py::buffer_info py_patch_heightfield::as_buffer() {
-  return py::buffer_info(file->reader.heightfield, sizeof(float),
-                         py::format_descriptor<float>::format(), 2,
-                         {ssize_t(file->reader.metadata.local_rows),
-                          ssize_t(file->reader.metadata.local_cols)},
-                         {ssize_t(file->reader.metadata.local_cols), ssize_t(1)});
+  return py::buffer_info(
+      file->reader.heightfield, sizeof(float), py::format_descriptor<float>::format(), 2,
+      {ssize_t(file->reader.metadata.local_rows),
+       ssize_t(file->reader.metadata.local_cols)},
+      {sizeof(float) * ssize_t(file->reader.metadata.local_cols), sizeof(float)});
 }
 
 void pybg3_log(std::string const& message) {
@@ -1075,9 +1075,9 @@ PYBIND11_MODULE(_pybg3, m) {
       .def_property_readonly("chunk_y", &py_patch_file::chunk_y)
       .def_property_readonly("global_rows", &py_patch_file::global_rows)
       .def_property_readonly("global_cols", &py_patch_file::global_cols);
-  py::class_<py_patch_layer>(m, "_PatchLayer")
+  py::class_<py_patch_layer>(m, "_PatchLayer", py::buffer_protocol())
       .def_property_readonly("name", &py_patch_layer::name)
-      .def("as_buffer", &py_patch_layer::as_buffer);
-  py::class_<py_patch_heightfield>(m, "_PatchHeightfield")
-      .def("as_buffer", &py_patch_heightfield::as_buffer);
+      .def_buffer(&py_patch_layer::as_buffer);
+  py::class_<py_patch_heightfield>(m, "_PatchHeightfield", py::buffer_protocol())
+      .def_buffer(&py_patch_heightfield::as_buffer);
 }

@@ -436,7 +436,7 @@ class LevelConverter:
 def process_nautiloid():
     mesh_converter = MeshConverter()
     level_converter = LevelConverter(mesh_converter=mesh_converter)
-    return level_converter.convert("WLD_Plains_D")
+    return level_converter.convert("TUT_Avernus_C")
 
 
 checktime("nautiloid", process_nautiloid)
