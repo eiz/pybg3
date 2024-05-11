@@ -260,7 +260,8 @@ def dump_granny(root, indent=0):
         for name in dir(root):
             child = root.__getattr__(name)
             if isinstance(child, _pybg3._GrannyDirectSpan):
-                print(f"{indent * ' '}{name}: {np.array(child, copy=False)}")
+                array = np.array(child, copy=False)
+                print(f"{indent * ' '}{name}: {array.shape} {array}")
             else:
                 print(f"{indent * ' '}{name}: {child}")
                 dump_granny(child, indent + 4)
@@ -287,9 +288,6 @@ class MeshConverter:
                 print(
                     f"mesh: {mesh.Name} vertices: {len(mesh.PrimaryVertexData.Vertices)}"
                 )
-            if "NAT_Coastal_Cliff_Sandstone_Spire_B.GR2" in path:
-                print("DUMP GRANNY")
-                dump_granny(granny.root)
             for mesh in granny.root.Meshes:
                 if mesh.Name == name:
                     path_meshes[name] = self._do_convert(path, name, mesh)
@@ -318,7 +316,7 @@ class MeshConverter:
         vt_vertices = Vt.Vec3fArray.FromNumpy(g_positions)
         vt_indices = Vt.IntArray.FromNumpy(g_indices)
         vt_face_counts = Vt.IntArray.FromNumpy(
-            np.full(g_positions.shape[0], 3, dtype=np.int32)
+            np.full(g_indices.shape[0], 3, dtype=np.int32)
         )
         u_points.Set(vt_vertices)
         u_vertex_face_counts = u_mesh.CreateFaceVertexCountsAttr()
@@ -339,81 +337,106 @@ def convert_visual_lod0(mesh_converter, visual):
     print(f"no LOD0 for {source_file.value}")
 
 
+class LevelConverter:
+    def __init__(self, *, mesh_converter):
+        self._mesh_converter = mesh_converter
+        self._converted_levels = {}
+        pass
+
+    def convert(self, level_name):
+        if level_name in self._converted_levels:
+            return self._converted_levels[level_name]
+        result = self._do_convert(level_name)
+        self._converted_levels[level_name] = result
+        return result
+
+    def _do_convert(self, level_name):
+        level = LEVELS[level_name]
+        os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
+        stage_path = f"out/Levels/{level_name}/_merged.usda"
+        stage = Usd.Stage.CreateNew(stage_path)
+        total_xforms = 0
+        visuals = ASSETS.get_or_create("Visual")
+        mesh_converter = self._mesh_converter
+        used_names = set()
+        for source in level.sources:
+            templates, _ = lsf.Node.parse_node(source.lsf, 0)
+            for obj in templates.children:
+                visual_template = obj.attrs.get("VisualTemplate")
+                root_template = ROOT_TEMPLATES.by_uuid.get(obj.attrs["TemplateName"])
+                key = obj.attrs["MapKey"]
+                name = (
+                    obj.attrs["Name"]
+                    .value.strip()
+                    .replace("-", "_")
+                    .replace(" ", "_")
+                    .replace("[", "")
+                    .replace("]", "")
+                    .replace("(", "")
+                    .replace(")", "")
+                    .replace(".", "")
+                    .replace("'", "")
+                    .replace(",", "_")
+                    .replace("?", "")
+                    .replace("\\", "_")
+                )
+                name = "_" + name
+                if name in used_names:
+                    name = name + "_" + to_pxr_uuid(key)
+                used_names.add(name)
+                mesh_usd_path = None
+                visual = None
+                if visual_template is None:
+                    visual_template = root_template.inherited_attribute("VisualTemplate")
+                if visual_template is not None and len(visual_template) > 0:
+                    visual = visuals.by_uuid.get(visual_template)
+                    if visual is None:
+                        pass
+                        # Weird: there seem to be a bunch of scenery objects with
+                        # VisualTemplates which are from an EffectBank, not a
+                        # VisualBank.
+                        # _pybg3.log(f"missing visual: {name}")
+                        # pprint.pp(root_template.node)
+                        # pprint.pp(index.query(visual_template))
+                    else:
+                        if "SourceFile" in visual.node.attrs:
+                            mesh_usd_path = convert_visual_lod0(mesh_converter, visual)
+                if name == "_NAT_Coastal_Cliff_Sandstone_Spire_C_Height_009":
+                    print("ROOT TEMPLATE")
+                    print(root_template.node)
+                    print("VISUAL")
+                    print(visual.node)
+                transform = obj.component("Transform")
+                if transform is not None:
+                    total_xforms += 1
+                    obj_key = f"/Levels/{level_name}/{source.type}/{name}"
+                    if mesh_usd_path is not None:
+                        obj = UsdGeom.Mesh.Define(stage, f"{obj_key}/mesh")
+                        obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
+                    else:
+                        obj = UsdGeom.Sphere.Define(stage, f"{obj_key}/missing")
+                        # obj.CreateRadiusAttr().Set(0.001)
+                    translate = obj.AddTranslateOp()
+                    a_translate = transform.attrs["Position"]
+                    translate.Set((a_translate.x, a_translate.y, a_translate.z))
+                    orient = obj.AddOrientOp()
+                    a_orient = transform.attrs["RotationQuat"]
+                    orient.Set(Gf.Quatf(a_orient.w, a_orient.x, a_orient.y, a_orient.z))
+                    if mesh_usd_path is not None:
+                        scale = obj.AddScaleOp()
+                        a_scale = transform.attrs["Scale"]
+                        scale.Set(Gf.Vec3f(a_scale.value, a_scale.value, a_scale.value))
+        level_prim = UsdGeom.Xform.Define(stage, f"/Levels/{level_name}")
+        level_prim.AddScaleOp().Set(Gf.Vec3f(1.0, 1.0, -1.0))
+        stage.GetRootLayer().Save()
+        print(f"Total xforms: {total_xforms}")
+        return stage_path
+
+
 def process_nautiloid():
-    level_name = "WLD_Crashsite_D"
-    level = LEVELS[level_name]
-    os.makedirs(f"out/Levels/{level_name}", exist_ok=True)
-    stage = Usd.Stage.CreateNew(f"out/Levels/{level_name}/_merged.usda")
-    total_xforms = 0
-    visuals = ASSETS.get_or_create("Visual")
     mesh_converter = MeshConverter()
-    used_names = set()
-    for source in level.sources:
-        templates, _ = lsf.Node.parse_node(source.lsf, 0)
-        for obj in templates.children:
-            visual_template = obj.attrs.get("VisualTemplate")
-            root_template = ROOT_TEMPLATES.by_uuid.get(obj.attrs["TemplateName"])
-            key = obj.attrs["MapKey"]
-            name = (
-                obj.attrs["Name"]
-                .value.strip()
-                .replace("-", "_")
-                .replace(" ", "_")
-                .replace("[", "")
-                .replace("]", "")
-                .replace("(", "")
-                .replace(")", "")
-                .replace(".", "")
-                .replace("'", "")
-                .replace(",", "_")
-                .replace("?", "")
-                .replace("\\", "_")
-            )
-            name = "_" + name
-            if name in used_names:
-                name = name + "_" + to_pxr_uuid(key)
-            used_names.add(name)
-            mesh_usd_path = None
-            visual = None
-            if visual_template is None:
-                visual_template = root_template.inherited_attribute("VisualTemplate")
-            if visual_template is not None and len(visual_template) > 0:
-                visual = visuals.by_uuid.get(visual_template)
-                if visual is None:
-                    pass
-                    # Weird: there seem to be a bunch of scenery objects with
-                    # VisualTemplates which are from an EffectBank, not a
-                    # VisualBank.
-                    # _pybg3.log(f"missing visual: {name}")
-                    # pprint.pp(root_template.node)
-                    # pprint.pp(index.query(visual_template))
-                else:
-                    if "SourceFile" in visual.node.attrs:
-                        mesh_usd_path = convert_visual_lod0(mesh_converter, visual)
-            transform = obj.component("Transform")
-            if transform is not None:
-                total_xforms += 1
-                obj_key = f"/Levels/{level_name}/{source.type}/{name}"
-                if mesh_usd_path is not None:
-                    obj = UsdGeom.Mesh.Define(stage, f"{obj_key}/mesh")
-                    obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
-                else:
-                    obj = UsdGeom.Sphere.Define(stage, f"{obj_key}/missing")
-                    # obj.CreateRadiusAttr().Set(0.001)
-                translate = obj.AddTranslateOp()
-                a_translate = transform.attrs["Position"]
-                translate.Set((a_translate.x, a_translate.y, a_translate.z))
-                orient = obj.AddOrientOp()
-                a_orient = transform.attrs["RotationQuat"]
-                orient.Set(Gf.Quatf(a_orient.w, a_orient.x, a_orient.y, a_orient.z))
-                if mesh_usd_path is not None:
-                    scale = obj.AddScaleOp()
-                    a_scale = transform.attrs["Scale"]
-                    scale.Set(Gf.Vec3f(a_scale.value, a_scale.value, a_scale.value))
-    level_prim = UsdGeom.Xform.Define(stage, f"/Levels/{level_name}")
-    level_prim.AddScaleOp().Set(Gf.Vec3f(1.0, 1.0, -1.0))
-    stage.GetRootLayer().Save()
-    print(f"Total xforms: {total_xforms}")
+    level_converter = LevelConverter(mesh_converter=mesh_converter)
+    return level_converter.convert("WLD_Plains_D")
 
 
 checktime("nautiloid", process_nautiloid)
