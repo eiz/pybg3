@@ -525,7 +525,7 @@ def process_nautiloid():
     level_converter = LevelConverter(
         mesh_converter=mesh_converter, patch_converter=patch_converter
     )
-    return level_converter.convert("TUT_Avernus_C")
+    return level_converter.convert("WLD_Crashsite_D")
 
 
 checktime("nautiloid", process_nautiloid)
