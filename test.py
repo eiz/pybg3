@@ -354,7 +354,7 @@ class PatchConverter:
             return None
 
     def _do_convert(self, path, patch):
-        usdc_path = path.replace(".patch", ".usdc")
+        usdc_path = f"out/Terrains/{path}.usdc"
         u_stage = Usd.Stage.CreateNew(usdc_path)
         height = np.array(patch.heightfield, copy=False)
         np_points = np.dstack(
@@ -411,10 +411,30 @@ class LevelConverter:
         self._converted_levels[level_name] = result
         return result
 
+    def _do_convert_terrain(self, obj, level_name, source, stage, name):
+        terrain_vis = obj.component("Visual")
+        if terrain_vis is None:
+            return
+        uuid = obj.attrs["MapKey"]
+        height = terrain_vis.attrs["Height"].value
+        width = terrain_vis.attrs["Width"].value
+        chunks_x = width // 64
+        chunks_y = height // 64
+        if width % 64 != 0:
+            chunks_x += 1
+        if height % 64 != 0:
+            chunks_y += 1
+        print(f"TERRAIN {height} {width}")
+        for y in range(chunks_y):
+            for x in range(chunks_x):
+                patch_path = f"Mods/{source.mod_name}/Levels/{level_name}/Terrains/{uuid}_{x}_{y}.patch"
+                self._patch_converter.convert(patch_path)
+
     def _do_convert_object(self, obj, level_name, source, stage, used_names):
         visual_template = obj.attrs.get("VisualTemplate")
         root_template = ROOT_TEMPLATES.by_uuid.get(obj.attrs["TemplateName"])
         key = obj.attrs["MapKey"]
+        objtype = obj.attrs["Type"]
         name = (
             obj.attrs["Name"]
             .value.strip()
@@ -434,6 +454,8 @@ class LevelConverter:
         if name in used_names:
             name = name + "_" + to_pxr_uuid(key)
         used_names.add(name)
+        if objtype == "terrain":
+            return self._do_convert_terrain(obj, level_name, source, stage, name)
         mesh_usd_path = None
         visual = None
         if visual_template is None:
@@ -451,11 +473,6 @@ class LevelConverter:
             else:
                 if "SourceFile" in visual.node.attrs:
                     mesh_usd_path = convert_visual_lod0(self._mesh_converter, visual)
-        if name == "_NAT_Coastal_Cliff_Sandstone_Spire_C_Height_009":
-            print("ROOT TEMPLATE")
-            print(root_template.node)
-            print("VISUAL")
-            print(visual.node)
         transform = obj.component("Transform")
         if transform is not None:
             obj_key = f"/Levels/{level_name}/{source.type}/{name}"
