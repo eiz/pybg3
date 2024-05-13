@@ -1,5 +1,4 @@
 import os
-import pprint
 import re
 import time
 import numpy as np
@@ -285,10 +284,6 @@ class MeshConverter:
         try:
             granny = _pybg3._GrannyReader.from_data(MODELS.file_data(path))
             for mesh in granny.root.Meshes:
-                print(
-                    f"mesh: {mesh.Name} vertices: {len(mesh.PrimaryVertexData.Vertices)}"
-                )
-            for mesh in granny.root.Meshes:
                 if mesh.Name == name:
                     path_meshes[name] = self._do_convert(path, name, mesh)
                     return path_meshes[name]
@@ -475,21 +470,21 @@ class LevelConverter:
                     mesh_usd_path = convert_visual_lod0(self._mesh_converter, visual)
         transform = obj.component("Transform")
         if transform is not None:
-            obj_key = f"/Levels/{level_name}/{source.type}/{name}"
+            u_obj_key = f"/Levels/{level_name}/{source.type}/{name}"
             if mesh_usd_path is not None:
-                obj = UsdGeom.Mesh.Define(stage, f"{obj_key}/mesh")
-                obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
+                u_obj = UsdGeom.Mesh.Define(stage, f"{u_obj_key}/mesh")
+                u_obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
             else:
-                obj = UsdGeom.Sphere.Define(stage, f"{obj_key}/missing")
+                u_obj = UsdGeom.Sphere.Define(stage, f"{u_obj_key}/missing")
                 # obj.CreateRadiusAttr().Set(0.001)
-            translate = obj.AddTranslateOp()
+            translate = u_obj.AddTranslateOp()
             a_translate = transform.attrs["Position"]
             translate.Set((a_translate.x, a_translate.y, a_translate.z))
-            orient = obj.AddOrientOp()
+            orient = u_obj.AddOrientOp()
             a_orient = transform.attrs["RotationQuat"]
             orient.Set(Gf.Quatf(a_orient.w, a_orient.x, a_orient.y, a_orient.z))
             if mesh_usd_path is not None:
-                scale = obj.AddScaleOp()
+                scale = u_obj.AddScaleOp()
                 a_scale = transform.attrs["Scale"]
                 scale.Set(Gf.Vec3f(a_scale.value, a_scale.value, a_scale.value))
 
