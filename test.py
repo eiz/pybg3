@@ -311,7 +311,7 @@ class MeshConverter:
         vt_vertices = Vt.Vec3fArray.FromNumpy(g_positions)
         vt_indices = Vt.IntArray.FromNumpy(g_indices)
         vt_face_counts = Vt.IntArray.FromNumpy(
-            np.full(g_indices.shape[0], 3, dtype=np.int32)
+            np.full(g_indices.shape[0] // 3, 3, dtype=np.int32)
         )
         u_points.Set(vt_vertices)
         u_vertex_face_counts = u_mesh.CreateFaceVertexCountsAttr()
@@ -525,7 +525,7 @@ def process_nautiloid():
     level_converter = LevelConverter(
         mesh_converter=mesh_converter, patch_converter=patch_converter
     )
-    return level_converter.convert("WLD_Crashsite_D")
+    return level_converter.convert("WLD_Plains_D")
 
 
 checktime("nautiloid", process_nautiloid)
