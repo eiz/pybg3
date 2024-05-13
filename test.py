@@ -355,11 +355,11 @@ class PatchConverter:
         np_points = np.dstack(
             (
                 np.repeat(
-                    np.arange(0, height.shape[0]).reshape(-1, 1), height.shape[1], axis=1
+                    np.arange(0, height.shape[1]).reshape(1, -1), height.shape[0], axis=0
                 ),
                 height,
                 np.repeat(
-                    np.arange(0, height.shape[1]).reshape(1, -1), height.shape[0], axis=0
+                    np.arange(0, height.shape[0]).reshape(-1, 1), height.shape[1], axis=1
                 ),
             )
         ).reshape(-1, 3)
@@ -369,12 +369,13 @@ class PatchConverter:
         )
         np_triangles = np.array(
             [
+                np_indices[1:, :-1],
+                np_indices[:-1, 1:],
                 np_indices[:-1, :-1],
-                np_indices[:-1, 1:],
-                np_indices[1:, :-1],
-                np_indices[1:, :-1],
-                np_indices[:-1, 1:],
+                #
                 np_indices[1:, 1:],
+                np_indices[:-1, 1:],
+                np_indices[1:, :-1],
             ]
         )
         np_index_buffer = np_triangles.transpose(1, 2, 0).reshape(-1)
@@ -420,10 +421,17 @@ class LevelConverter:
         if height % 64 != 0:
             chunks_y += 1
         print(f"TERRAIN {height} {width}")
+        u_terrain_key = f"/Levels/{level_name}/Terrains/{name}"
+        u_terrain = UsdGeom.Xform.Define(stage, u_terrain_key)
         for y in range(chunks_y):
             for x in range(chunks_x):
                 patch_path = f"Mods/{source.mod_name}/Levels/{level_name}/Terrains/{uuid}_{x}_{y}.patch"
-                self._patch_converter.convert(patch_path)
+                patch_usdc_path = self._patch_converter.convert(patch_path)
+                u_mesh = UsdGeom.Mesh.Define(stage, f"{u_terrain_key}/patch_{x}_{y}")
+                u_mesh.GetPrim().GetReferences().AddReference(patch_usdc_path)
+                translate = u_mesh.AddTranslateOp()
+                translate.Set((x * 64, 0, y * 64))
+        return u_terrain
 
     def _do_convert_object(self, obj, level_name, source, stage, used_names):
         visual_template = obj.attrs.get("VisualTemplate")
@@ -449,41 +457,45 @@ class LevelConverter:
         if name in used_names:
             name = name + "_" + to_pxr_uuid(key)
         used_names.add(name)
+        is_placeholder = False
+        u_obj = None
+        u_obj_key = f"/Levels/{level_name}/{source.type}/{name}"
         if objtype == "terrain":
-            return self._do_convert_terrain(obj, level_name, source, stage, name)
-        mesh_usd_path = None
-        visual = None
-        if visual_template is None:
-            visual_template = root_template.inherited_attribute("VisualTemplate")
-        if visual_template is not None and len(visual_template) > 0:
-            visual = self._visuals.by_uuid.get(visual_template)
-            if visual is None:
-                pass
-                # Weird: there seem to be a bunch of scenery objects with
-                # VisualTemplates which are from an EffectBank, not a
-                # VisualBank.
-                # _pybg3.log(f"missing visual: {name}")
-                # pprint.pp(root_template.node)
-                # pprint.pp(index.query(visual_template))
-            else:
-                if "SourceFile" in visual.node.attrs:
-                    mesh_usd_path = convert_visual_lod0(self._mesh_converter, visual)
-        transform = obj.component("Transform")
-        if transform is not None:
-            u_obj_key = f"/Levels/{level_name}/{source.type}/{name}"
+            u_obj = self._do_convert_terrain(obj, level_name, source, stage, name)
+        else:
+            mesh_usd_path = None
+            visual = None
+            if visual_template is None:
+                visual_template = root_template.inherited_attribute("VisualTemplate")
+            if visual_template is not None and len(visual_template) > 0:
+                visual = self._visuals.by_uuid.get(visual_template)
+                if visual is None:
+                    pass
+                    # Weird: there seem to be a bunch of scenery objects with
+                    # VisualTemplates which are from an EffectBank, not a
+                    # VisualBank.
+                    # _pybg3.log(f"missing visual: {name}")
+                    # pprint.pp(root_template.node)
+                    # pprint.pp(index.query(visual_template))
+                else:
+                    if "SourceFile" in visual.node.attrs:
+                        mesh_usd_path = convert_visual_lod0(self._mesh_converter, visual)
             if mesh_usd_path is not None:
                 u_obj = UsdGeom.Mesh.Define(stage, f"{u_obj_key}/mesh")
                 u_obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
             else:
                 u_obj = UsdGeom.Sphere.Define(stage, f"{u_obj_key}/missing")
+                is_placeholder = True
                 # obj.CreateRadiusAttr().Set(0.001)
+        transform = obj.component("Transform")
+        if transform is not None:
             translate = u_obj.AddTranslateOp()
             a_translate = transform.attrs["Position"]
             translate.Set((a_translate.x, a_translate.y, a_translate.z))
             orient = u_obj.AddOrientOp()
             a_orient = transform.attrs["RotationQuat"]
             orient.Set(Gf.Quatf(a_orient.w, a_orient.x, a_orient.y, a_orient.z))
-            if mesh_usd_path is not None:
+            if not is_placeholder:
                 scale = u_obj.AddScaleOp()
                 a_scale = transform.attrs["Scale"]
                 scale.Set(Gf.Vec3f(a_scale.value, a_scale.value, a_scale.value))
