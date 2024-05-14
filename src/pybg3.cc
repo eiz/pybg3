@@ -84,7 +84,24 @@ struct py_lspk_file {
   ~py_lspk_file() {
     bg3_lspk_file_destroy(&lspk);
     bg3_mapped_file_destroy(&mapped);
+    for (bg3_mapped_file& part : part_files) {
+      bg3_mapped_file_destroy(&part);
+    }
   }
+  void attach_part(size_t part_num, const std::string& path) {
+    bg3_mapped_file part;
+    bg3_status status = bg3_mapped_file_init_ro(&part, path.c_str());
+    if (status) {
+      throw std::runtime_error("Failed to open part file");
+    }
+    status = bg3_lspk_file_attach_part(&lspk, part_num, part.data, part.data_len);
+    if (status) {
+      bg3_mapped_file_destroy(&part);
+      throw std::runtime_error("Failed to attach part file");
+    }
+    part_files.push_back(part);
+  }
+  size_t num_parts() { return lspk.header.num_parts; }
   size_t num_files() { return lspk.num_files; }
   std::string file_name(size_t idx) {
     if (idx >= lspk.num_files) {
@@ -103,6 +120,12 @@ struct py_lspk_file {
     }
     return entry->uncompressed_size;
   }
+  size_t file_part(size_t idx) {
+    if (idx >= lspk.num_files) {
+      throw std::runtime_error("Index out of bounds");
+    }
+    return lspk.manifest[idx].part_num;
+  }
   int priority() { return lspk.header.priority; }
   py::bytes file_data(size_t idx) {
     if (idx >= lspk.num_files) {
@@ -119,6 +142,7 @@ struct py_lspk_file {
   }
   bg3_mapped_file mapped;
   bg3_lspk_file lspk;
+  std::vector<bg3_mapped_file> part_files;
 };
 
 static py::object convert_value(bg3_lsof_dt type, char* value_bytes, size_t length) {
@@ -1014,9 +1038,12 @@ PYBIND11_MODULE(_pybg3, m) {
   m.def("log", &pybg3_log, "Log a message");
   py::class_<py_lspk_file>(m, "_LspkFile")
       .def(py::init<const std::string&>())
+      .def("attach_part", &py_lspk_file::attach_part)
       .def("file_name", &py_lspk_file::file_name)
       .def("file_size", &py_lspk_file::file_size)
       .def("file_data", &py_lspk_file::file_data)
+      .def("file_part", &py_lspk_file::file_part)
+      .def("num_parts", &py_lspk_file::num_parts)
       .def("num_files", &py_lspk_file::num_files)
       .def("priority", &py_lspk_file::priority);
   py::class_<py_lsof_file>(m, "_LsofFile")

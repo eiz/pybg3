@@ -21,6 +21,7 @@
 # SOFTWARE.
 
 from typing import Iterable
+from pathlib import Path
 from . import _pybg3
 
 
@@ -28,14 +29,23 @@ class PakFile:
     _lspk: _pybg3._LspkFile
     _index: dict[str, int]
 
-    def __init__(self, path: str):
+    def __init__(self, path: Path):
         self._lspk = _pybg3._LspkFile(str(path))
         self._index = {}
         for i in range(self._lspk.num_files()):
             self._index[self._lspk.file_name(i)] = i
+        num_parts = self._lspk.num_parts()
+        if num_parts > 1:
+            for i in range(1, num_parts):
+                part_base = path.stem
+                part_path = path.with_name(f"{part_base}_{i}{path.suffix}")
+                self._lspk.attach_part(i, str(part_path))
 
     def files(self) -> Iterable[str]:
         return self._index.keys()
 
     def file_data(self, name: str) -> bytes:
         return self._lspk.file_data(self._index[name])
+
+    def file_part(self, name: str) -> int:
+        return self._lspk.file_part(self._index[name])

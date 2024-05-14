@@ -323,15 +323,6 @@ class MeshConverter:
         return stage_path
 
 
-def convert_visual_lod0(mesh_converter, visual):
-    source_file = visual.node.attrs["SourceFile"]
-    for node in visual.node.children:
-        if node.name == "Objects" and node.attrs["LOD"].value == 0:
-            object_id = node.attrs["ObjectID"].split(".")[1]
-            return mesh_converter.convert(source_file.value, object_id)
-    print(f"no LOD0 for {source_file.value}")
-
-
 class PatchConverter:
     def __init__(self):
         self._converted = {}
@@ -398,6 +389,7 @@ class LevelConverter:
         self._patch_converter = patch_converter
         self._converted_levels = {}
         self._visuals = ASSETS.get_or_create("Visual")
+        self._materials = ASSETS.get_or_create("Material")
         pass
 
     def convert(self, level_name):
@@ -432,6 +424,23 @@ class LevelConverter:
                 translate = u_mesh.AddTranslateOp()
                 translate.Set((x * 64, 0, y * 64))
         return u_terrain
+
+    def _convert_visual_lod0(self, visual):
+        source_file = visual.node.attrs["SourceFile"]
+        for node in visual.node.children:
+            if node.name == "Objects" and node.attrs["LOD"].value == 0:
+                material_id = node.attrs["MaterialID"]
+                material = self._materials.by_uuid.get(material_id)
+                if material is None:
+                    print(f"missing material: {material_id}")
+                else:
+                    print(
+                        f"material: {material.node.attrs['SourceFile'].value} "
+                        f"type {material.node.attrs['MaterialType'].value}"
+                    )
+                object_id = node.attrs["ObjectID"].split(".")[1]
+                return self._mesh_converter.convert(source_file.value, object_id)
+        print(f"no LOD0 for {source_file.value}")
 
     def _do_convert_object(self, obj, level_name, source, stage, used_names):
         visual_template = obj.attrs.get("VisualTemplate")
@@ -479,7 +488,7 @@ class LevelConverter:
                     # pprint.pp(index.query(visual_template))
                 else:
                     if "SourceFile" in visual.node.attrs:
-                        mesh_usd_path = convert_visual_lod0(self._mesh_converter, visual)
+                        mesh_usd_path = self._convert_visual_lod0(visual)
             if mesh_usd_path is not None:
                 u_obj = UsdGeom.Mesh.Define(stage, f"{u_obj_key}/mesh")
                 u_obj.GetPrim().GetReferences().AddReference(mesh_usd_path)
@@ -525,7 +534,7 @@ def process_nautiloid():
     level_converter = LevelConverter(
         mesh_converter=mesh_converter, patch_converter=patch_converter
     )
-    return level_converter.convert("WLD_Plains_D")
+    return level_converter.convert("WLD_Crashsite_D")
 
 
 checktime("nautiloid", process_nautiloid)
