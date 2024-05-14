@@ -37,8 +37,7 @@ class PakFile:
         num_parts = self._lspk.num_parts()
         if num_parts > 1:
             for i in range(1, num_parts):
-                part_base = path.stem
-                part_path = path.with_name(f"{part_base}_{i}{path.suffix}")
+                part_path = path.with_name(f"{path.stem}_{i}{path.suffix}")
                 self._lspk.attach_part(i, str(part_path))
 
     def files(self) -> Iterable[str]:

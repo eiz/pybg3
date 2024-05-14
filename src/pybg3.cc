@@ -924,7 +924,7 @@ struct py_granny_reader : public std::enable_shared_from_this<py_granny_reader> 
     }
   }
   std::unique_ptr<py_granny_ptr> root() {
-    bg3_granny_obj_root* root = bg3_granny_reader_get_root(&reader);
+    void* root = bg3_granny_reader_get_root(&reader);
     bg3_granny_type_info* root_type = bg3_granny_reader_get_root_type(&reader);
     return std::make_unique<py_granny_ptr>(shared_from_this(), root_type, root);
   }
