@@ -48,3 +48,6 @@ class PakFile:
 
     def file_part(self, name: str) -> int:
         return self._lspk.file_part(self._index[name])
+
+    def file_size(self, name: str) -> int:
+        return self._lspk.file_size(self._index[name])

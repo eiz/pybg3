@@ -1026,6 +1026,47 @@ py::buffer_info py_patch_heightfield::as_buffer() {
       {sizeof(float) * ssize_t(file->reader.metadata.local_cols), sizeof(float)});
 }
 
+struct py_gts_reader : public std::enable_shared_from_this<py_gts_reader> {
+  static std::shared_ptr<py_gts_reader> from_path(py::str path) {
+    return std::make_shared<py_gts_reader>(path);
+  }
+  static std::shared_ptr<py_gts_reader> from_data(py::bytes data) {
+    return std::make_shared<py_gts_reader>(data);
+  }
+  py_gts_reader(py::str py_path) {
+    std::string path(py_path);
+    bg3_status status = bg3_mapped_file_init_ro(&mapped, path.c_str());
+    if (status) {
+      throw std::runtime_error("Failed to open gts file");
+    }
+    status = bg3_gts_reader_init(&reader, mapped.data, mapped.data_len);
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse gts file");
+    }
+    is_mapped_file = true;
+  }
+  py_gts_reader(py::bytes data) : data(data) {
+    std::string_view view(data);
+    bg3_status status = bg3_gts_reader_init(&reader, (char*)view.data(), view.size());
+    if (status) {
+      bg3_mapped_file_destroy(&mapped);
+      throw std::runtime_error("Failed to parse gts file");
+    }
+  }
+  ~py_gts_reader() {
+    if (is_mapped_file) {
+      bg3_mapped_file_destroy(&mapped);
+    }
+    bg3_gts_reader_destroy(&reader);
+  }
+  void dump() { bg3_gts_reader_dump(&reader); }
+  bool is_mapped_file{false};
+  py::bytes data;
+  bg3_mapped_file mapped;
+  bg3_gts_reader reader;
+};
+
 void pybg3_log(std::string const& message) {
   setvbuf(stdout, NULL, _IONBF, 0);
   printf("%s\n", message.c_str());
@@ -1107,4 +1148,8 @@ PYBIND11_MODULE(_pybg3, m) {
       .def_buffer(&py_patch_layer::as_buffer);
   py::class_<py_patch_heightfield>(m, "_PatchHeightfield", py::buffer_protocol())
       .def_buffer(&py_patch_heightfield::as_buffer);
+  py::class_<py_gts_reader, std::shared_ptr<py_gts_reader>>(m, "_GtsReader")
+      .def_static("from_path", &py_gts_reader::from_path)
+      .def_static("from_data", &py_gts_reader::from_data)
+      .def("dump", &py_gts_reader::dump);
 }
