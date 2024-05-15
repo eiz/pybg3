@@ -537,4 +537,9 @@ def process_nautiloid():
     return level_converter.convert("WLD_Crashsite_D")
 
 
-checktime("nautiloid", process_nautiloid)
+# checktime("nautiloid", process_nautiloid)
+
+gts = _pybg3._GtsReader.from_path(
+    "tmp/Generated/Public/VirtualTextures/Albedo_Normal_Physical_0.gts"
+)
+gts.dump()
