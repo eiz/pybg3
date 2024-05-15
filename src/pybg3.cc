@@ -772,7 +772,7 @@ static py::object convert_scalar(std::shared_ptr<py_granny_reader>& reader,
       return py::cast(std::make_unique<py_granny_ptr>(reader, ti->reference_type, ref));
     }
     case bg3_granny_dt_reference_to_array: {
-      struct LIBBG3_GRANNY_PACK {
+      struct LIBBG3_PACK {
         int32_t num_elements;
         void* ref;
       } pack;
@@ -781,7 +781,7 @@ static py::object convert_scalar(std::shared_ptr<py_granny_reader>& reader,
           reader, ti->reference_type, pack.ref, pack.num_elements));
     }
     case bg3_granny_dt_array_of_references: {
-      struct LIBBG3_GRANNY_PACK {
+      struct LIBBG3_PACK {
         int32_t num_elements;
         void* ref;
       } pack;
